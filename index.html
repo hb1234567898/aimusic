@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#101312">
+  <meta name="description" content="MOONWAVE：旋转唱片星球，发现值得听的音乐。">
+  <title>MOONWAVE · 音乐星球</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="page-shell">
+    <header class="topbar">
+      <a class="brand" href="#home" aria-label="MOONWAVE 首页"><span class="brand-mark" aria-hidden="true">◐</span><span>MOONWAVE<small>LISTEN DIFFERENTLY</small></span></a>
+      <span class="topbar-note"><i></i> ON AIR</span>
+    </header>
+    <main id="home">
+      <section class="globe-area" id="playlist" aria-label="可旋转音乐星球">
+        <div class="globe-heading">
+          <div><span class="eyebrow">EXPLORE THE SOUND</span><h1>让音乐，围绕你。</h1><p>拖动探索音乐星球，轻点封面开始聆听。</p></div>
+          <div class="globe-count"><span>THE COLLECTION</span><strong>30 首真实音乐</strong><small>Komiku · 6 张专辑 · CC0</small></div>
+        </div>
+        <div class="globe" id="playlistUniverse" aria-label="拖动旋转，轻点播放，长按调整卡片位置">
+          <div class="globe-aura" aria-hidden="true"></div>
+          <div class="globe-rim" aria-hidden="true"></div>
+          <button class="done-button" id="doneBtn" type="button">完成排序</button>
+        </div>
+        <div class="globe-instructions"><span class="drag-icon">↔</span><span id="globeHint">拖动旋转 · 轻点播放 · 长按换位</span></div>
+      </section>
+    </main>
+    <section class="player-dock" aria-label="底部播放器">
+      <div class="dock-track">
+        <div class="cover"><img id="mainCover" src="assets/cover-Poupis_incredible_adventures_.jpg" alt="当前专辑封面"></div>
+        <div class="track-heading"><span class="now-label">NOW PLAYING</span><h2 id="trackTitle">Opening !</h2><p id="trackArtist">Komiku</p></div>
+        <button class="heart" id="heartBtn" aria-label="收藏歌曲" aria-pressed="false">♡</button>
+      </div>
+      <div class="dock-playback">
+        <div class="player-controls"><button id="prevBtn" aria-label="上一首">❮❮</button><button id="mainPlay" class="play-button" aria-label="播放">▶</button><button id="nextBtn" aria-label="下一首">❯❯</button></div>
+        <div class="seek"><span id="currentTime">00:00</span><input id="progress" type="range" min="0" max="100" value="0" aria-label="播放进度"><span id="duration">00:00</span></div>
+      </div>
+      <a class="dock-source" href="MUSIC_CREDITS.md" title="查看音乐和封面来源">SOURCE ↗</a>
+    </section>
+  </div>
+  <script src="script.js"></script>
+</body>
+</html>
