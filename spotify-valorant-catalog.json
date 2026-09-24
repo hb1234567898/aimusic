@@ -1,0 +1,923 @@
+[
+  {
+    "id": 0,
+    "title": "If The Sun Burns Out Tonight",
+    "artists": [
+      "VALORANT",
+      "Grabbitz",
+      "Oli Sykes",
+      "Courtney LaPlante"
+    ],
+    "artist": "VALORANT, Grabbitz, Oli Sykes, Courtney LaPlante",
+    "durationMs": 226403,
+    "duration": 226.403,
+    "releaseDate": "2026-09-16T00:00:00Z",
+    "year": 2026,
+    "explicit": false,
+    "spotifyId": "6XZ5emkGiXmX3T77PhIKam",
+    "spotifyUri": "spotify:track:6XZ5emkGiXmX3T77PhIKam",
+    "spotifyUrl": "https://open.spotify.com/track/6XZ5emkGiXmX3T77PhIKam",
+    "cover": {
+      "url": "https://image-cdn-ak.spotifycdn.com/image/ab67616d0000b2736ac59ec778330ddd507ee0b0",
+      "width": 640,
+      "height": 640
+    },
+    "previewUrl": "https://p.scdn.co/mp3-preview/f4b52771a9ed49cdc2cb72d529be233ca361d513",
+    "previewFormat": "MP3_96",
+    "sourcePlaylist": "https://open.spotify.com/playlist/37i9dQZF1DZ06evO22XGKK",
+    "lyricsLookup": {
+      "title": "If The Sun Burns Out Tonight",
+      "artists": "VALORANT, Grabbitz, Oli Sykes, Courtney LaPlante",
+      "duration": 226
+    }
+  },
+  {
+    "id": 1,
+    "title": "Die For You",
+    "artists": [
+      "VALORANT",
+      "Grabbitz"
+    ],
+    "artist": "VALORANT, Grabbitz",
+    "durationMs": 212926,
+    "duration": 212.926,
+    "releaseDate": "2024-08-28T00:00:00Z",
+    "year": 2024,
+    "explicit": false,
+    "spotifyId": "0EIiEUREYnDRHbWKP55o4F",
+    "spotifyUri": "spotify:track:0EIiEUREYnDRHbWKP55o4F",
+    "spotifyUrl": "https://open.spotify.com/track/0EIiEUREYnDRHbWKP55o4F",
+    "cover": {
+      "url": "https://image-cdn-ak.spotifycdn.com/image/ab67616d0000b27304802a3a9e155e4eaed25520",
+      "width": 640,
+      "height": 640
+    },
+    "previewUrl": "https://p.scdn.co/mp3-preview/da861f2367116aaf564654b2d9b06d02d93c39a3",
+    "previewFormat": "MP3_96",
+    "sourcePlaylist": "https://open.spotify.com/playlist/37i9dQZF1DZ06evO22XGKK",
+    "lyricsLookup": {
+      "title": "Die For You",
+      "artists": "VALORANT, Grabbitz",
+      "duration": 213
+    }
+  },
+  {
+    "id": 2,
+    "title": "Last Shot",
+    "artists": [
+      "VALORANT",
+      "templuv",
+      "347aidan"
+    ],
+    "artist": "VALORANT, templuv, 347aidan",
+    "durationMs": 184517,
+    "duration": 184.517,
+    "releaseDate": "2025-09-03T00:00:00Z",
+    "year": 2025,
+    "explicit": false,
+    "spotifyId": "5ppdmIeHPG2qLHm0SsmqfB",
+    "spotifyUri": "spotify:track:5ppdmIeHPG2qLHm0SsmqfB",
+    "spotifyUrl": "https://open.spotify.com/track/5ppdmIeHPG2qLHm0SsmqfB",
+    "cover": {
+      "url": "https://image-cdn-ak.spotifycdn.com/image/ab67616d0000b273a5c3cd4efbd2b04e47f83ecc",
+      "width": 640,
+      "height": 640
+    },
+    "previewUrl": "https://p.scdn.co/mp3-preview/1b6af26c506112edbdb89585348b36a1f383a4c1",
+    "previewFormat": "MP3_96",
+    "sourcePlaylist": "https://open.spotify.com/playlist/37i9dQZF1DZ06evO22XGKK",
+    "lyricsLookup": {
+      "title": "Last Shot",
+      "artists": "VALORANT, templuv, 347aidan",
+      "duration": 185
+    }
+  },
+  {
+    "id": 3,
+    "title": "in my zone",
+    "artists": [
+      "VALORANT",
+      "bbno$"
+    ],
+    "artist": "VALORANT, bbno$",
+    "durationMs": 172043,
+    "duration": 172.043,
+    "releaseDate": "2025-08-18T00:00:00Z",
+    "year": 2025,
+    "explicit": false,
+    "spotifyId": "4izeeSsA3Ft1oBKDSaXmFX",
+    "spotifyUri": "spotify:track:4izeeSsA3Ft1oBKDSaXmFX",
+    "spotifyUrl": "https://open.spotify.com/track/4izeeSsA3Ft1oBKDSaXmFX",
+    "cover": {
+      "url": "https://image-cdn-ak.spotifycdn.com/image/ab67616d0000b273b4b35682e8790a71fc727866",
+      "width": 640,
+      "height": 640
+    },
+    "previewUrl": "https://p.scdn.co/mp3-preview/f907c979e54185e70afb33ae7d18b3a56a65c4f4",
+    "previewFormat": "MP3_96",
+    "sourcePlaylist": "https://open.spotify.com/playlist/37i9dQZF1DZ06evO22XGKK",
+    "lyricsLookup": {
+      "title": "in my zone",
+      "artists": "VALORANT, bbno$",
+      "duration": 172
+    }
+  },
+  {
+    "id": 4,
+    "title": "EGO",
+    "artists": [
+      "Qing Madi",
+      "VALORANT"
+    ],
+    "artist": "Qing Madi, VALORANT",
+    "durationMs": 217773,
+    "duration": 217.773,
+    "releaseDate": "2025-06-02T00:00:00Z",
+    "year": 2025,
+    "explicit": false,
+    "spotifyId": "4rDKyQvJiMmDbSqH5AbKxh",
+    "spotifyUri": "spotify:track:4rDKyQvJiMmDbSqH5AbKxh",
+    "spotifyUrl": "https://open.spotify.com/track/4rDKyQvJiMmDbSqH5AbKxh",
+    "cover": {
+      "url": "https://image-cdn-ak.spotifycdn.com/image/ab67616d0000b273f632f3a092051c741f912214",
+      "width": 640,
+      "height": 640
+    },
+    "previewUrl": "https://p.scdn.co/mp3-preview/645342760c71d342366feee1ada07cda1c918f49",
+    "previewFormat": "MP3_96",
+    "sourcePlaylist": "https://open.spotify.com/playlist/37i9dQZF1DZ06evO22XGKK",
+    "lyricsLookup": {
+      "title": "EGO",
+      "artists": "Qing Madi, VALORANT",
+      "duration": 218
+    }
+  },
+  {
+    "id": 5,
+    "title": "Ticking Away",
+    "artists": [
+      "VALORANT",
+      "Grabbitz",
+      "bbno$"
+    ],
+    "artist": "VALORANT, Grabbitz, bbno$",
+    "durationMs": 205270,
+    "duration": 205.27,
+    "releaseDate": "2024-08-28T00:00:00Z",
+    "year": 2024,
+    "explicit": false,
+    "spotifyId": "2ZZoBU3S2aNYSaU1dAtgcJ",
+    "spotifyUri": "spotify:track:2ZZoBU3S2aNYSaU1dAtgcJ",
+    "spotifyUrl": "https://open.spotify.com/track/2ZZoBU3S2aNYSaU1dAtgcJ",
+    "cover": {
+      "url": "https://image-cdn-ak.spotifycdn.com/image/ab67616d0000b27304802a3a9e155e4eaed25520",
+      "width": 640,
+      "height": 640
+    },
+    "previewUrl": "https://p.scdn.co/mp3-preview/0103dae599fb60b25d7103c6f89a34cddaa337d0",
+    "previewFormat": "MP3_96",
+    "sourcePlaylist": "https://open.spotify.com/playlist/37i9dQZF1DZ06evO22XGKK",
+    "lyricsLookup": {
+      "title": "Ticking Away",
+      "artists": "VALORANT, Grabbitz, bbno$",
+      "duration": 205
+    }
+  },
+  {
+    "id": 6,
+    "title": "Clarity - BUNT. Remix",
+    "artists": [
+      "Zedd",
+      "VALORANT",
+      "Foxes",
+      "BUNT."
+    ],
+    "artist": "Zedd, VALORANT, Foxes, BUNT.",
+    "durationMs": 204110,
+    "duration": 204.11,
+    "releaseDate": "2026-03-15T00:00:00Z",
+    "year": 2026,
+    "explicit": false,
+    "spotifyId": "13fVuFWEQOGlYY6EaxfQyj",
+    "spotifyUri": "spotify:track:13fVuFWEQOGlYY6EaxfQyj",
+    "spotifyUrl": "https://open.spotify.com/track/13fVuFWEQOGlYY6EaxfQyj",
+    "cover": {
+      "url": "https://image-cdn-ak.spotifycdn.com/image/ab67616d0000b2738a70ea5a1deebf51427d6e2c",
+      "width": 640,
+      "height": 640
+    },
+    "previewUrl": "https://p.scdn.co/mp3-preview/559625cfdd9e672595fb8fa037d6726e6905a195",
+    "previewFormat": "MP3_96",
+    "sourcePlaylist": "https://open.spotify.com/playlist/37i9dQZF1DZ06evO22XGKK",
+    "lyricsLookup": {
+      "title": "Clarity - BUNT. Remix",
+      "artists": "Zedd, VALORANT, Foxes, BUNT.",
+      "duration": 204
+    }
+  },
+  {
+    "id": 7,
+    "title": "M.I.A - VALORANT Game Changers Version",
+    "artists": [
+      "KATSEYE",
+      "VALORANT"
+    ],
+    "artist": "KATSEYE, VALORANT",
+    "durationMs": 129587,
+    "duration": 129.587,
+    "releaseDate": "2025-09-04T00:00:00Z",
+    "year": 2025,
+    "explicit": false,
+    "spotifyId": "0VodPyDs7Uw9UpeRp22vq6",
+    "spotifyUri": "spotify:track:0VodPyDs7Uw9UpeRp22vq6",
+    "spotifyUrl": "https://open.spotify.com/track/0VodPyDs7Uw9UpeRp22vq6",
+    "cover": {
+      "url": "https://image-cdn-ak.spotifycdn.com/image/ab67616d0000b2736aa2abf1afc153481e6c42a3",
+      "width": 640,
+      "height": 640
+    },
+    "previewUrl": "https://p.scdn.co/mp3-preview/f04da7649d4f9988f926be2a0615a12c67a052f4",
+    "previewFormat": "MP3_96",
+    "sourcePlaylist": "https://open.spotify.com/playlist/37i9dQZF1DZ06evO22XGKK",
+    "lyricsLookup": {
+      "title": "M.I.A - VALORANT Game Changers Version",
+      "artists": "KATSEYE, VALORANT",
+      "duration": 130
+    }
+  },
+  {
+    "id": 8,
+    "title": "UNDEFEATED",
+    "artists": [
+      "XG",
+      "VALORANT"
+    ],
+    "artist": "XG, VALORANT",
+    "durationMs": 173105,
+    "duration": 173.105,
+    "releaseDate": "2024-04-12T00:00:00Z",
+    "year": 2024,
+    "explicit": false,
+    "spotifyId": "0NrObqc8nK1XcDNPJNBKRV",
+    "spotifyUri": "spotify:track:0NrObqc8nK1XcDNPJNBKRV",
+    "spotifyUrl": "https://open.spotify.com/track/0NrObqc8nK1XcDNPJNBKRV",
+    "cover": {
+      "url": "https://image-cdn-fa.spotifycdn.com/image/ab67616d0000b273719bf2389b183bd96df89fbf",
+      "width": 640,
+      "height": 640
+    },
+    "previewUrl": "https://p.scdn.co/mp3-preview/ee4261dce5e6b5297137fc09b2bd2e806cf93e78",
+    "previewFormat": "MP3_96",
+    "sourcePlaylist": "https://open.spotify.com/playlist/37i9dQZF1DZ06evO22XGKK",
+    "lyricsLookup": {
+      "title": "UNDEFEATED",
+      "artists": "XG, VALORANT",
+      "duration": 173
+    }
+  },
+  {
+    "id": 9,
+    "title": "Fire Again",
+    "artists": [
+      "VALORANT",
+      "Ashnikko"
+    ],
+    "artist": "VALORANT, Ashnikko",
+    "durationMs": 206776,
+    "duration": 206.776,
+    "releaseDate": "2024-08-28T00:00:00Z",
+    "year": 2024,
+    "explicit": false,
+    "spotifyId": "5kVjpdS4gqRtJtpbpd03M1",
+    "spotifyUri": "spotify:track:5kVjpdS4gqRtJtpbpd03M1",
+    "spotifyUrl": "https://open.spotify.com/track/5kVjpdS4gqRtJtpbpd03M1",
+    "cover": {
+      "url": "https://image-cdn-fa.spotifycdn.com/image/ab67616d0000b27304802a3a9e155e4eaed25520",
+      "width": 640,
+      "height": 640
+    },
+    "previewUrl": "https://p.scdn.co/mp3-preview/a30576106708507162985ba5e3446b2fff9e3fb9",
+    "previewFormat": "MP3_96",
+    "sourcePlaylist": "https://open.spotify.com/playlist/37i9dQZF1DZ06evO22XGKK",
+    "lyricsLookup": {
+      "title": "Fire Again",
+      "artists": "VALORANT, Ashnikko",
+      "duration": 207
+    }
+  },
+  {
+    "id": 10,
+    "title": "Can't Slow Me Down",
+    "artists": [
+      "VALORANT",
+      "MIRANI",
+      "lIlBOI",
+      "GroovyRoom"
+    ],
+    "artist": "VALORANT, MIRANI, lIlBOI, GroovyRoom",
+    "durationMs": 138960,
+    "duration": 138.96,
+    "releaseDate": "2022-02-15T00:00:00Z",
+    "year": 2022,
+    "explicit": false,
+    "spotifyId": "3nh6Moj9U4PmjzALwwu50Y",
+    "spotifyUri": "spotify:track:3nh6Moj9U4PmjzALwwu50Y",
+    "spotifyUrl": "https://open.spotify.com/track/3nh6Moj9U4PmjzALwwu50Y",
+    "cover": {
+      "url": "https://image-cdn-ak.spotifycdn.com/image/ab67616d0000b273b022596e91e8a04cebe33640",
+      "width": 640,
+      "height": 640
+    },
+    "previewUrl": "https://p.scdn.co/mp3-preview/bff40cbaab066b97413125f8d62900c03b3bb21e",
+    "previewFormat": "MP3_96",
+    "sourcePlaylist": "https://open.spotify.com/playlist/37i9dQZF1DZ06evO22XGKK",
+    "lyricsLookup": {
+      "title": "Can't Slow Me Down",
+      "artists": "VALORANT, MIRANI, lIlBOI, GroovyRoom",
+      "duration": 139
+    }
+  },
+  {
+    "id": 11,
+    "title": "Toxic",
+    "artists": [
+      "VALORANT",
+      "KiNG MALA",
+      "AUDREY NUNA"
+    ],
+    "artist": "VALORANT, KiNG MALA, AUDREY NUNA",
+    "durationMs": 213386,
+    "duration": 213.386,
+    "releaseDate": "2026-01-05T00:00:00Z",
+    "year": 2026,
+    "explicit": false,
+    "spotifyId": "0l1KwXejNQ1iIZ9A3La6HF",
+    "spotifyUri": "spotify:track:0l1KwXejNQ1iIZ9A3La6HF",
+    "spotifyUrl": "https://open.spotify.com/track/0l1KwXejNQ1iIZ9A3La6HF",
+    "cover": {
+      "url": "https://image-cdn-ak.spotifycdn.com/image/ab67616d0000b273b31638b72490b07bad547446",
+      "width": 640,
+      "height": 640
+    },
+    "previewUrl": "https://p.scdn.co/mp3-preview/51ec343f2d41f7a8a697713bcb717db310a6a22f",
+    "previewFormat": "MP3_96",
+    "sourcePlaylist": "https://open.spotify.com/playlist/37i9dQZF1DZ06evO22XGKK",
+    "lyricsLookup": {
+      "title": "Toxic",
+      "artists": "VALORANT, KiNG MALA, AUDREY NUNA",
+      "duration": 213
+    }
+  },
+  {
+    "id": 12,
+    "title": "VISIONS",
+    "artists": [
+      "eaJ",
+      "Safari Riot",
+      "VALORANT"
+    ],
+    "artist": "eaJ, Safari Riot, VALORANT",
+    "durationMs": 225142,
+    "duration": 225.142,
+    "releaseDate": "2023-01-05T00:00:00Z",
+    "year": 2023,
+    "explicit": false,
+    "spotifyId": "5pkqN8A6vyZp3qmUZK41zc",
+    "spotifyUri": "spotify:track:5pkqN8A6vyZp3qmUZK41zc",
+    "spotifyUrl": "https://open.spotify.com/track/5pkqN8A6vyZp3qmUZK41zc",
+    "cover": {
+      "url": "https://image-cdn-ak.spotifycdn.com/image/ab67616d0000b273eff41d6b4f12827b9f845152",
+      "width": 640,
+      "height": 640
+    },
+    "previewUrl": "https://p.scdn.co/mp3-preview/701fab83987cfe6eb30d5cd04d006e7bd97a6f93",
+    "previewFormat": "MP3_96",
+    "sourcePlaylist": "https://open.spotify.com/playlist/37i9dQZF1DZ06evO22XGKK",
+    "lyricsLookup": {
+      "title": "VISIONS",
+      "artists": "eaJ, Safari Riot, VALORANT",
+      "duration": 225
+    }
+  },
+  {
+    "id": 13,
+    "title": "RUN!",
+    "artists": [
+      "VALORANT",
+      "Odetari",
+      "Lay Bankz"
+    ],
+    "artist": "VALORANT, Odetari, Lay Bankz",
+    "durationMs": 148244,
+    "duration": 148.244,
+    "releaseDate": "2024-08-28T00:00:00Z",
+    "year": 2024,
+    "explicit": false,
+    "spotifyId": "7KSn0rk67jB4JZCxNRcT6w",
+    "spotifyUri": "spotify:track:7KSn0rk67jB4JZCxNRcT6w",
+    "spotifyUrl": "https://open.spotify.com/track/7KSn0rk67jB4JZCxNRcT6w",
+    "cover": {
+      "url": "https://image-cdn-ak.spotifycdn.com/image/ab67616d0000b27304802a3a9e155e4eaed25520",
+      "width": 640,
+      "height": 640
+    },
+    "previewUrl": "https://p.scdn.co/mp3-preview/fea4cbf9ba062cbfcb59204e480c4ff8de0d8ca4",
+    "previewFormat": "MP3_96",
+    "sourcePlaylist": "https://open.spotify.com/playlist/37i9dQZF1DZ06evO22XGKK",
+    "lyricsLookup": {
+      "title": "RUN!",
+      "artists": "VALORANT, Odetari, Lay Bankz",
+      "duration": 148
+    }
+  },
+  {
+    "id": 14,
+    "title": "my lawyer said don't",
+    "artists": [
+      "VALORANT",
+      "8AE"
+    ],
+    "artist": "VALORANT, 8AE",
+    "durationMs": 132133,
+    "duration": 132.133,
+    "releaseDate": "2025-01-06T00:00:00Z",
+    "year": 2025,
+    "explicit": false,
+    "spotifyId": "3Ql71wXCJA58TY7VeYEYIZ",
+    "spotifyUri": "spotify:track:3Ql71wXCJA58TY7VeYEYIZ",
+    "spotifyUrl": "https://open.spotify.com/track/3Ql71wXCJA58TY7VeYEYIZ",
+    "cover": {
+      "url": "https://image-cdn-fa.spotifycdn.com/image/ab67616d0000b273dea6ea2cc9c8fa9a94fd44bf",
+      "width": 640,
+      "height": 640
+    },
+    "previewUrl": "https://p.scdn.co/mp3-preview/c28d338b04a19b98ba5273aa97cc30e3593f4075",
+    "previewFormat": "MP3_96",
+    "sourcePlaylist": "https://open.spotify.com/playlist/37i9dQZF1DZ06evO22XGKK",
+    "lyricsLookup": {
+      "title": "my lawyer said don't",
+      "artists": "VALORANT, 8AE",
+      "duration": 132
+    }
+  },
+  {
+    "id": 15,
+    "title": "superHuman",
+    "artists": [
+      "AUDREY NUNA",
+      "VALORANT"
+    ],
+    "artist": "AUDREY NUNA, VALORANT",
+    "durationMs": 161253,
+    "duration": 161.253,
+    "releaseDate": "2026-08-07T00:00:00Z",
+    "year": 2026,
+    "explicit": true,
+    "spotifyId": "3Lnw56zn0t1pUyDTHiiMmG",
+    "spotifyUri": "spotify:track:3Lnw56zn0t1pUyDTHiiMmG",
+    "spotifyUrl": "https://open.spotify.com/track/3Lnw56zn0t1pUyDTHiiMmG",
+    "cover": {
+      "url": "https://image-cdn-fa.spotifycdn.com/image/ab67616d0000b273f5fa1ba0303b55f42e521315",
+      "width": 640,
+      "height": 640
+    },
+    "previewUrl": "https://p.scdn.co/mp3-preview/9af1ced8cd896970917a5dc4cdbbececfa94e140",
+    "previewFormat": "MP3_96",
+    "sourcePlaylist": "https://open.spotify.com/playlist/37i9dQZF1DZ06evO22XGKK",
+    "lyricsLookup": {
+      "title": "superHuman",
+      "artists": "AUDREY NUNA, VALORANT",
+      "duration": 161
+    }
+  },
+  {
+    "id": 16,
+    "title": "Shinpai Muyou",
+    "artists": [
+      "Yuki Chiba",
+      "VALORANT"
+    ],
+    "artist": "Yuki Chiba, VALORANT",
+    "durationMs": 165009,
+    "duration": 165.009,
+    "releaseDate": "2025-07-11T00:00:00Z",
+    "year": 2025,
+    "explicit": false,
+    "spotifyId": "1susvnKQ4rmj5AyAC1YuPR",
+    "spotifyUri": "spotify:track:1susvnKQ4rmj5AyAC1YuPR",
+    "spotifyUrl": "https://open.spotify.com/track/1susvnKQ4rmj5AyAC1YuPR",
+    "cover": {
+      "url": "https://image-cdn-ak.spotifycdn.com/image/ab67616d0000b273898d6f286c94200c34174288",
+      "width": 640,
+      "height": 640
+    },
+    "previewUrl": "https://p.scdn.co/mp3-preview/d3ac9121f217a1be9d03284f4f76072b00ccb78d",
+    "previewFormat": "MP3_96",
+    "sourcePlaylist": "https://open.spotify.com/playlist/37i9dQZF1DZ06evO22XGKK",
+    "lyricsLookup": {
+      "title": "Shinpai Muyou",
+      "artists": "Yuki Chiba, VALORANT",
+      "duration": 165
+    }
+  },
+  {
+    "id": 17,
+    "title": "SUPERPOWER",
+    "artists": [
+      "VALORANT",
+      "KISS OF LIFE",
+      "Mark Tuan"
+    ],
+    "artist": "VALORANT, KISS OF LIFE, Mark Tuan",
+    "durationMs": 182987,
+    "duration": 182.987,
+    "releaseDate": "2024-08-28T00:00:00Z",
+    "year": 2024,
+    "explicit": false,
+    "spotifyId": "7y97RbibcWt5kv9RYpZdWy",
+    "spotifyUri": "spotify:track:7y97RbibcWt5kv9RYpZdWy",
+    "spotifyUrl": "https://open.spotify.com/track/7y97RbibcWt5kv9RYpZdWy",
+    "cover": {
+      "url": "https://image-cdn-ak.spotifycdn.com/image/ab67616d0000b27304802a3a9e155e4eaed25520",
+      "width": 640,
+      "height": 640
+    },
+    "previewUrl": "https://p.scdn.co/mp3-preview/e800551c073456cff0bd8516602843cbb88eda29",
+    "previewFormat": "MP3_96",
+    "sourcePlaylist": "https://open.spotify.com/playlist/37i9dQZF1DZ06evO22XGKK",
+    "lyricsLookup": {
+      "title": "SUPERPOWER",
+      "artists": "VALORANT, KISS OF LIFE, Mark Tuan",
+      "duration": 183
+    }
+  },
+  {
+    "id": 18,
+    "title": "RE-IGNITION",
+    "artists": [
+      "VALORANT",
+      "ARB4",
+      "Jazz Alonso",
+      "Emei"
+    ],
+    "artist": "VALORANT, ARB4, Jazz Alonso, Emei",
+    "durationMs": 204444,
+    "duration": 204.444,
+    "releaseDate": "2023-08-31T00:00:00Z",
+    "year": 2023,
+    "explicit": false,
+    "spotifyId": "5LsdMS59gJEuf4seMJJSlg",
+    "spotifyUri": "spotify:track:5LsdMS59gJEuf4seMJJSlg",
+    "spotifyUrl": "https://open.spotify.com/track/5LsdMS59gJEuf4seMJJSlg",
+    "cover": {
+      "url": "https://image-cdn-ak.spotifycdn.com/image/ab67616d0000b273215a54ffe2c6d16213ee6b37",
+      "width": 640,
+      "height": 640
+    },
+    "previewUrl": "https://p.scdn.co/mp3-preview/6fdde2dec48105f8465f7bd3ac91d346a548b52c",
+    "previewFormat": "MP3_96",
+    "sourcePlaylist": "https://open.spotify.com/playlist/37i9dQZF1DZ06evO22XGKK",
+    "lyricsLookup": {
+      "title": "RE-IGNITION",
+      "artists": "VALORANT, ARB4, Jazz Alonso, Emei",
+      "duration": 204
+    }
+  },
+  {
+    "id": 19,
+    "title": "IN THE RING",
+    "artists": [
+      "VALORANT",
+      "Don·Jessie"
+    ],
+    "artist": "VALORANT, Don·Jessie",
+    "durationMs": 144276,
+    "duration": 144.276,
+    "releaseDate": "2023-10-19T00:00:00Z",
+    "year": 2023,
+    "explicit": false,
+    "spotifyId": "4VP3M1k4k0S0zoWpTuOW3t",
+    "spotifyUri": "spotify:track:4VP3M1k4k0S0zoWpTuOW3t",
+    "spotifyUrl": "https://open.spotify.com/track/4VP3M1k4k0S0zoWpTuOW3t",
+    "cover": {
+      "url": "https://image-cdn-ak.spotifycdn.com/image/ab67616d0000b273f742b030081813cb7846961a",
+      "width": 640,
+      "height": 640
+    },
+    "previewUrl": "https://p.scdn.co/mp3-preview/6b8576b8ca91a5267eb2e4fc073c2d163c3e5c5c",
+    "previewFormat": "MP3_96",
+    "sourcePlaylist": "https://open.spotify.com/playlist/37i9dQZF1DZ06evO22XGKK",
+    "lyricsLookup": {
+      "title": "IN THE RING",
+      "artists": "VALORANT, Don·Jessie",
+      "duration": 144
+    }
+  },
+  {
+    "id": 20,
+    "title": "RAJA",
+    "artists": [
+      "ARB4",
+      "Tienas",
+      "VALORANT",
+      "Mangal Suvarnan"
+    ],
+    "artist": "ARB4, Tienas, VALORANT, Mangal Suvarnan",
+    "durationMs": 232325,
+    "duration": 232.325,
+    "releaseDate": "2022-10-13T00:00:00Z",
+    "year": 2022,
+    "explicit": false,
+    "spotifyId": "5cK2V7WweyHWKeHLqJoJ4L",
+    "spotifyUri": "spotify:track:5cK2V7WweyHWKeHLqJoJ4L",
+    "spotifyUrl": "https://open.spotify.com/track/5cK2V7WweyHWKeHLqJoJ4L",
+    "cover": {
+      "url": "https://image-cdn-ak.spotifycdn.com/image/ab67616d0000b2735a59379b9cbda40825b44495",
+      "width": 640,
+      "height": 640
+    },
+    "previewUrl": "https://p.scdn.co/mp3-preview/78e4b26b761eabbc002e8d92294e542d860d37c4",
+    "previewFormat": "MP3_96",
+    "sourcePlaylist": "https://open.spotify.com/playlist/37i9dQZF1DZ06evO22XGKK",
+    "lyricsLookup": {
+      "title": "RAJA",
+      "artists": "ARB4, Tienas, VALORANT, Mangal Suvarnan",
+      "duration": 232
+    }
+  },
+  {
+    "id": 21,
+    "title": ">one (greater than one)",
+    "artists": [
+      "VALORANT",
+      "ericdoa"
+    ],
+    "artist": "VALORANT, ericdoa",
+    "durationMs": 130666,
+    "duration": 130.666,
+    "releaseDate": "2024-08-28T00:00:00Z",
+    "year": 2024,
+    "explicit": false,
+    "spotifyId": "4VwFMekbfiPV16vyqinkTx",
+    "spotifyUri": "spotify:track:4VwFMekbfiPV16vyqinkTx",
+    "spotifyUrl": "https://open.spotify.com/track/4VwFMekbfiPV16vyqinkTx",
+    "cover": {
+      "url": "https://image-cdn-ak.spotifycdn.com/image/ab67616d0000b27304802a3a9e155e4eaed25520",
+      "width": 640,
+      "height": 640
+    },
+    "previewUrl": "https://p.scdn.co/mp3-preview/e5f7fe88de5c7a69139c6ddffec844b7d67fb0e5",
+    "previewFormat": "MP3_96",
+    "sourcePlaylist": "https://open.spotify.com/playlist/37i9dQZF1DZ06evO22XGKK",
+    "lyricsLookup": {
+      "title": ">one (greater than one)",
+      "artists": "VALORANT, ericdoa",
+      "duration": 131
+    }
+  },
+  {
+    "id": 22,
+    "title": "Watch",
+    "artists": [
+      "Stella Mwangi",
+      "VALORANT"
+    ],
+    "artist": "Stella Mwangi, VALORANT",
+    "durationMs": 152149,
+    "duration": 152.149,
+    "releaseDate": "2021-06-21T00:00:00Z",
+    "year": 2021,
+    "explicit": false,
+    "spotifyId": "5ZZ6MnHa8GzJG4YKhwPkIK",
+    "spotifyUri": "spotify:track:5ZZ6MnHa8GzJG4YKhwPkIK",
+    "spotifyUrl": "https://open.spotify.com/track/5ZZ6MnHa8GzJG4YKhwPkIK",
+    "cover": {
+      "url": "https://image-cdn-fa.spotifycdn.com/image/ab67616d0000b273504378e55bd7129c44cd7c10",
+      "width": 640,
+      "height": 640
+    },
+    "previewUrl": "https://p.scdn.co/mp3-preview/e4b1fffede040d3fe76571636e5ddc03e46719c1",
+    "previewFormat": "MP3_96",
+    "sourcePlaylist": "https://open.spotify.com/playlist/37i9dQZF1DZ06evO22XGKK",
+    "lyricsLookup": {
+      "title": "Watch",
+      "artists": "Stella Mwangi, VALORANT",
+      "duration": 152
+    }
+  },
+  {
+    "id": 23,
+    "title": "La Lumière",
+    "artists": [
+      "VALORANT",
+      "Willim",
+      "Mr. He"
+    ],
+    "artist": "VALORANT, Willim, Mr. He",
+    "durationMs": 202893,
+    "duration": 202.893,
+    "releaseDate": "2026-08-01T00:00:00Z",
+    "year": 2026,
+    "explicit": false,
+    "spotifyId": "4w8r0yLFI8oFrOXzPViikg",
+    "spotifyUri": "spotify:track:4w8r0yLFI8oFrOXzPViikg",
+    "spotifyUrl": "https://open.spotify.com/track/4w8r0yLFI8oFrOXzPViikg",
+    "cover": {
+      "url": "https://image-cdn-fa.spotifycdn.com/image/ab67616d0000b2732e149d772bdc24abfe04ccc6",
+      "width": 640,
+      "height": 640
+    },
+    "previewUrl": "https://p.scdn.co/mp3-preview/88047d66df772ad2a3c46e90058581206bfe5a76",
+    "previewFormat": "MP3_96",
+    "sourcePlaylist": "https://open.spotify.com/playlist/37i9dQZF1DZ06evO22XGKK",
+    "lyricsLookup": {
+      "title": "La Lumière",
+      "artists": "VALORANT, Willim, Mr. He",
+      "duration": 203
+    }
+  },
+  {
+    "id": 24,
+    "title": "When the World Ends",
+    "artists": [
+      "VALORANT",
+      "Raiden",
+      "jeonghyeon"
+    ],
+    "artist": "VALORANT, Raiden, jeonghyeon",
+    "durationMs": 169411,
+    "duration": 169.411,
+    "releaseDate": "2024-12-06T00:00:00Z",
+    "year": 2024,
+    "explicit": false,
+    "spotifyId": "5oRNPd9tI4GbJ0Jtpv5LC0",
+    "spotifyUri": "spotify:track:5oRNPd9tI4GbJ0Jtpv5LC0",
+    "spotifyUrl": "https://open.spotify.com/track/5oRNPd9tI4GbJ0Jtpv5LC0",
+    "cover": {
+      "url": "https://image-cdn-ak.spotifycdn.com/image/ab67616d0000b273344af3d9fbe7d1e2ae411afa",
+      "width": 640,
+      "height": 640
+    },
+    "previewUrl": "https://p.scdn.co/mp3-preview/000555d69c676e4fc731cbc4ce3862ed9dd25979",
+    "previewFormat": "MP3_96",
+    "sourcePlaylist": "https://open.spotify.com/playlist/37i9dQZF1DZ06evO22XGKK",
+    "lyricsLookup": {
+      "title": "When the World Ends",
+      "artists": "VALORANT, Raiden, jeonghyeon",
+      "duration": 169
+    }
+  },
+  {
+    "id": 25,
+    "title": "2WORLDS (Demo Version)",
+    "artists": [
+      "Madge",
+      "VALORANT"
+    ],
+    "artist": "Madge, VALORANT",
+    "durationMs": 124713,
+    "duration": 124.713,
+    "releaseDate": "2024-04-11T00:00:00Z",
+    "year": 2024,
+    "explicit": false,
+    "spotifyId": "5b1clAZbUk7y0yFzace97F",
+    "spotifyUri": "spotify:track:5b1clAZbUk7y0yFzace97F",
+    "spotifyUrl": "https://open.spotify.com/track/5b1clAZbUk7y0yFzace97F",
+    "cover": {
+      "url": "https://image-cdn-ak.spotifycdn.com/image/ab67616d0000b273970df6047f3bebacf2627b9c",
+      "width": 640,
+      "height": 640
+    },
+    "previewUrl": "https://p.scdn.co/mp3-preview/c2b5369065a8a03f142261631932387de67fbf50",
+    "previewFormat": "MP3_96",
+    "sourcePlaylist": "https://open.spotify.com/playlist/37i9dQZF1DZ06evO22XGKK",
+    "lyricsLookup": {
+      "title": "2WORLDS (Demo Version)",
+      "artists": "Madge, VALORANT",
+      "duration": 125
+    }
+  },
+  {
+    "id": 26,
+    "title": "Savior",
+    "artists": [
+      "VALORANT",
+      "One True God"
+    ],
+    "artist": "VALORANT, One True God",
+    "durationMs": 186250,
+    "duration": 186.25,
+    "releaseDate": "2023-08-11T00:00:00Z",
+    "year": 2023,
+    "explicit": false,
+    "spotifyId": "6JemiI83tiXsztQAVEmMFT",
+    "spotifyUri": "spotify:track:6JemiI83tiXsztQAVEmMFT",
+    "spotifyUrl": "https://open.spotify.com/track/6JemiI83tiXsztQAVEmMFT",
+    "cover": {
+      "url": "https://image-cdn-ak.spotifycdn.com/image/ab67616d0000b273b1b95c69582512521a9c25b0",
+      "width": 640,
+      "height": 640
+    },
+    "previewUrl": "https://p.scdn.co/mp3-preview/77af92aaffb04120d73897dda83d6cb784ea83c2",
+    "previewFormat": "MP3_96",
+    "sourcePlaylist": "https://open.spotify.com/playlist/37i9dQZF1DZ06evO22XGKK",
+    "lyricsLookup": {
+      "title": "Savior",
+      "artists": "VALORANT, One True God",
+      "duration": 186
+    }
+  },
+  {
+    "id": 27,
+    "title": "You Call Me Reckless",
+    "artists": [
+      "F.O.O.L",
+      "Essenger",
+      "Life Awaits",
+      "VALORANT"
+    ],
+    "artist": "F.O.O.L, Essenger, Life Awaits, VALORANT",
+    "durationMs": 195929,
+    "duration": 195.929,
+    "releaseDate": "2025-08-14T00:00:00Z",
+    "year": 2025,
+    "explicit": false,
+    "spotifyId": "0GRhBpD36Iu7ur3fUUJgzN",
+    "spotifyUri": "spotify:track:0GRhBpD36Iu7ur3fUUJgzN",
+    "spotifyUrl": "https://open.spotify.com/track/0GRhBpD36Iu7ur3fUUJgzN",
+    "cover": {
+      "url": "https://image-cdn-ak.spotifycdn.com/image/ab67616d0000b273673c191092da5852bd92983e",
+      "width": 640,
+      "height": 640
+    },
+    "previewUrl": "https://p.scdn.co/mp3-preview/486ed1529fc73c4d4971edf2d4cec8e0018c17c8",
+    "previewFormat": "MP3_96",
+    "sourcePlaylist": "https://open.spotify.com/playlist/37i9dQZF1DZ06evO22XGKK",
+    "lyricsLookup": {
+      "title": "You Call Me Reckless",
+      "artists": "F.O.O.L, Essenger, Life Awaits, VALORANT",
+      "duration": 196
+    }
+  },
+  {
+    "id": 28,
+    "title": "Stay Awake",
+    "artists": [
+      "VALORANT",
+      "Willim",
+      "HAOO"
+    ],
+    "artist": "VALORANT, Willim, HAOO",
+    "durationMs": 147486,
+    "duration": 147.486,
+    "releaseDate": "2024-12-06T00:00:00Z",
+    "year": 2024,
+    "explicit": false,
+    "spotifyId": "2Esh0IosTyp9XLG0nSL3hz",
+    "spotifyUri": "spotify:track:2Esh0IosTyp9XLG0nSL3hz",
+    "spotifyUrl": "https://open.spotify.com/track/2Esh0IosTyp9XLG0nSL3hz",
+    "cover": {
+      "url": "https://image-cdn-fa.spotifycdn.com/image/ab67616d0000b273344af3d9fbe7d1e2ae411afa",
+      "width": 640,
+      "height": 640
+    },
+    "previewUrl": "https://p.scdn.co/mp3-preview/06b9385c07ab7dbc3bacfbad7a91c92db6072469",
+    "previewFormat": "MP3_96",
+    "sourcePlaylist": "https://open.spotify.com/playlist/37i9dQZF1DZ06evO22XGKK",
+    "lyricsLookup": {
+      "title": "Stay Awake",
+      "artists": "VALORANT, Willim, HAOO",
+      "duration": 147
+    }
+  },
+  {
+    "id": 29,
+    "title": "Chaos In The House - Valorant Masters London",
+    "artists": [
+      "Che Lingo",
+      "VALORANT"
+    ],
+    "artist": "Che Lingo, VALORANT",
+    "durationMs": 197000,
+    "duration": 197,
+    "releaseDate": "2026-05-28T00:00:00Z",
+    "year": 2026,
+    "explicit": false,
+    "spotifyId": "5NN7JZx2DxnX2eFMmyFwgT",
+    "spotifyUri": "spotify:track:5NN7JZx2DxnX2eFMmyFwgT",
+    "spotifyUrl": "https://open.spotify.com/track/5NN7JZx2DxnX2eFMmyFwgT",
+    "cover": {
+      "url": "https://image-cdn-ak.spotifycdn.com/image/ab67616d0000b273bc434a4458a99d35ef86c821",
+      "width": 640,
+      "height": 640
+    },
+    "previewUrl": "https://p.scdn.co/mp3-preview/8ab89b22713e91b5a785d3b93eb5d2f705e339fd",
+    "previewFormat": "MP3_96",
+    "sourcePlaylist": "https://open.spotify.com/playlist/37i9dQZF1DZ06evO22XGKK",
+    "lyricsLookup": {
+      "title": "Chaos In The House - Valorant Masters London",
+      "artists": "Che Lingo, VALORANT",
+      "duration": 197
+    }
+  }
+]

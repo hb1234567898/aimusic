@@ -1,0 +1,660 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>3D 背景律动 Demo</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  html,body{height:100%;background:#08080a;overflow:hidden;color:#e9e9ee;
+    font-family:-apple-system,"Segoe UI",system-ui,"PingFang SC","Microsoft YaHei",sans-serif}
+  #stage{display:block;width:100vw;height:100vh}
+  .meta{position:fixed;top:14px;left:16px;font-size:12px;line-height:1.9;color:#82828d;
+    letter-spacing:.4px;z-index:5;pointer-events:none;text-shadow:0 1px 8px #000}
+  .meta b{color:#e6e6ec;font-weight:600}
+  .meter{display:inline-block;width:96px;height:4px;background:#ffffff1f;border-radius:2px;
+    overflow:hidden;vertical-align:middle;margin-left:6px}
+  .meter i{display:block;height:100%;width:0;background:linear-gradient(90deg,#4cc9f0,#f72585)}
+  .hint{position:fixed;top:14px;right:16px;font-size:11px;color:#6c6c76;z-index:5;
+    text-align:right;line-height:1.9;pointer-events:none}
+  .hud{position:fixed;left:0;right:0;bottom:0;display:flex;gap:9px;align-items:center;
+    justify-content:center;flex-wrap:wrap;padding:14px 16px 18px;
+    background:linear-gradient(transparent,#000000cc 45%);z-index:5}
+  button{appearance:none;border:1px solid #ffffff26;background:#ffffff0f;color:#dcdce4;
+    padding:9px 15px;border-radius:999px;font-size:13px;cursor:pointer;
+    backdrop-filter:blur(6px);transition:background .2s,border-color .2s,color .2s}
+  button:hover{background:#ffffff20;border-color:#ffffff59}
+  button.on{background:#fff;color:#111;border-color:#fff}
+  .slider{display:flex;align-items:center;gap:8px;font-size:12px;color:#a9a9b4}
+  .slider input{width:104px;accent-color:#fff}
+  .slider span{display:inline-block;min-width:34px;color:#e6e6ec}
+</style>
+</head>
+<body>
+<canvas id="stage"></canvas>
+
+<div class="meta">
+  <div>当前效果：<b id="name">星域粒子</b></div>
+  <div>低频 <span class="meter"><i id="barBass"></i></span>
+       高频 <span class="meter"><i id="barTre"></i></span></div>
+  <div id="src">音源：模拟节拍（点击播放切到真实频谱）</div>
+  <div id="fps">—</div>
+</div>
+<div class="hint">按 1–4 切换效果<br>空格 播放 / 暂停</div>
+
+<div class="hud">
+  <button data-demo="0" class="on">1 星域粒子</button>
+  <button data-demo="1">2 律动地球</button>
+  <button data-demo="2">3 律动隧道</button>
+  <button data-demo="3">4 线框球体</button>
+  <button data-demo="4">5 棋盘地形</button>
+  <button id="play">播放音乐</button>
+  <label class="slider">地轴倾角 <input id="tilt" type="range" min="0" max="120" value="41"><span id="tiltVal">0.41</span></label>
+</div>
+
+<script>
+(function () {
+  'use strict';
+
+  var canvas = document.getElementById('stage');
+  var ctx = canvas.getContext('2d');
+  var NAMES = ['星域粒子', '律动地球', '律动隧道', '线框球体', '棋盘地形'];
+  var FOV = 520;
+
+  var W = 0, H = 0, DPR = 1;
+  function resize() {
+    DPR = Math.min(window.devicePixelRatio || 1, 2);
+    W = window.innerWidth;
+    H = window.innerHeight;
+    canvas.width = Math.round(W * DPR);
+    canvas.height = Math.round(H * DPR);
+    canvas.style.width = W + 'px';
+    canvas.style.height = H + 'px';
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  }
+  window.addEventListener('resize', resize);
+  resize();
+
+  // ---------- 音频 / 频谱 ----------
+  var BANDS = 48;
+  var bands = new Float32Array(BANDS);
+  var audioCtx = null, analyser = null, freq = null, audioEl = null, live = false;
+  var bass = 0, treble = 0, energy = 0, beat = 0;
+
+  function initAudio() {
+    if (audioCtx) return;
+    var AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return;
+    try {
+      audioCtx = new AC();
+      analyser = audioCtx.createAnalyser();
+      analyser.fftSize = 1024;
+      analyser.smoothingTimeConstant = 0.72;
+      freq = new Uint8Array(analyser.frequencyBinCount);
+      audioEl = new Audio('assets/01/If_The_Sun_Burns_Out_Tonight-VALORANT.mp3');
+      audioEl.loop = true;
+      audioEl.crossOrigin = 'anonymous';
+      var src = audioCtx.createMediaElementSource(audioEl);
+      src.connect(analyser);
+      analyser.connect(audioCtx.destination);
+      live = true;
+    } catch (e) {
+      live = false;
+    }
+  }
+
+  var target = new Float32Array(BANDS);
+  function sampleBands(t) {
+    if (live && analyser) {
+      analyser.getByteFrequencyData(freq);
+      var usable = Math.floor(freq.length * 0.62);
+      for (var i = 0; i < BANDS; i++) {
+        var lo = Math.floor(Math.pow(i / BANDS, 1.7) * usable);
+        var hi = Math.max(lo + 1, Math.floor(Math.pow((i + 1) / BANDS, 1.7) * usable));
+        var sum = 0;
+        for (var k = lo; k < hi; k++) sum += freq[k];
+        target[i] = (sum / (hi - lo)) / 255;
+      }
+    } else {
+      // 无音频时用模拟节拍驱动，约 96 BPM
+      var pulse = Math.pow(Math.max(0, Math.sin(t * Math.PI * 1.6)), 6);
+      for (var j = 0; j < BANDS; j++) {
+        var w = Math.sin(t * 1.1 + j * 0.28) * 0.5 + 0.5;
+        target[j] = (0.16 + 0.6 * w * w) * (0.42 + 0.9 * pulse) + 0.05 * Math.sin(t * 4.3 + j * 1.7);
+      }
+    }
+    for (var m = 0; m < BANDS; m++) {
+      var v = Math.max(0, Math.min(1.4, target[m]));
+      bands[m] += (v - bands[m]) * (v > bands[m] ? 0.45 : 0.14);
+    }
+    var b = 0, tr = 0, all = 0;
+    for (var p = 0; p < 6; p++) b += bands[p];
+    for (var q = 24; q < BANDS; q++) tr += bands[q];
+    for (var r = 0; r < BANDS; r++) all += bands[r];
+    bass += (b / 6 - bass) * 0.3;
+    treble += (tr / (BANDS - 24) - treble) * 0.3;
+    energy += (all / BANDS - energy) * 0.2;
+    beat = Math.max(0, bass - 0.32) * 1.7;
+  }
+
+  // ---------- 效果 1：星域粒子 ----------
+  var stars = [];
+  (function initStars() {
+    for (var i = 0; i < 700; i++) {
+      stars.push({
+        x: (Math.random() * 2 - 1) * 1600,
+        y: (Math.random() * 2 - 1) * 950,
+        z: Math.random() * 2800 + 20
+      });
+    }
+  })();
+
+  function drawStars() {
+    var cx = W / 2, cy = H / 2;
+    var speed = 1.6 + energy * 8 + beat * 4;
+    var spread = 1 + beat * 0.07;
+    for (var i = 0; i < stars.length; i++) {
+      var s = stars[i];
+      s.z -= speed;
+      if (s.z < 20) {
+        s.z = 2800;
+        s.x = (Math.random() * 2 - 1) * 1600;
+        s.y = (Math.random() * 2 - 1) * 950;
+      }
+      var sc = FOV / (FOV + s.z);
+      var px = cx + s.x * sc * spread;
+      var py = cy + s.y * sc * spread;
+      if (px < -60 || px > W + 60 || py < -60 || py > H + 60) continue;
+      var size = Math.max(0.4, 2.3 * sc * (0.55 + bass * 1.5));
+      var a = Math.min(1, (1 - s.z / 2800) * 0.92 + 0.05);
+      var hue = 195 + (s.z / 2800) * 58 + bass * 45;
+      ctx.fillStyle = 'hsla(' + hue + ',' + (68 + treble * 30) + '%,' + (54 + energy * 32) + '%,' + a + ')';
+      ctx.beginPath();
+      ctx.arc(px, py, size, 0, 6.2832);
+      ctx.fill();
+    }
+  }
+
+  // ---------- 效果 2：律动地球（球面立方柱，随音律局部升起） ----------
+  // 球面上按经纬网格铺满立方柱，柱子沿球面法线朝外生长。
+  // 高度 = 球面噪声场(决定"哪些区域"当前活跃) x 对应频段能量 —— 所以只有一部分柱子会随音乐升起。
+  var AXIS = 0.41;      // 地轴倾角（弧度），滑块可调
+  var CAMD = 2400;      // 相机到球心的距离
+  var SFOV = 780;       // 本效果专用焦距（比全局 FOV 大 = 弱透视，更像在看一颗星球）
+  var GR = 700;         // 地球半径
+  var LATN = 26, LON_MAX = 56, Q = 30;
+  var spin = 0;
+  var pillars = [];
+  var pillarH = null;
+
+  (function buildPillars() {
+    for (var i = 0; i < LATN; i++) {
+      var lat = -Math.PI / 2 + (i + 0.5) / LATN * Math.PI;
+      var cl = Math.cos(lat), sl = Math.sin(lat);
+      var count = Math.max(6, Math.round(LON_MAX * cl));
+      for (var j = 0; j < count; j++) {
+        pillars.push({
+          idx: pillars.length,
+          cl: cl, sl: sl,
+          lon: j / count * Math.PI * 2,
+          freq: Math.min(BANDS - 1, Math.floor((lat + Math.PI / 2) / Math.PI * BANDS))
+        });
+      }
+    }
+    pillarH = new Float32Array(pillars.length);
+  })();
+
+  // 熔岩色表：t=0 近黑棕 → 0.45 暗红橙 → 0.86 亮橙 → 1 亮黄白
+  var LUT = [];
+  (function buildLUT() {
+    var stops = [
+      [0.00, 18, 12, 9],
+      [0.22, 64, 27, 14],
+      [0.45, 150, 53, 20],
+      [0.68, 228, 108, 30],
+      [0.86, 255, 170, 68],
+      [1.00, 255, 238, 176]
+    ];
+    for (var i = 0; i < 256; i++) {
+      var tv = i / 255, s = 0;
+      while (s < stops.length - 2 && tv > stops[s + 1][0]) s++;
+      var p = stops[s], q = stops[s + 1];
+      var f = Math.max(0, Math.min(1, (tv - p[0]) / (q[0] - p[0])));
+      LUT.push([
+        Math.round(p[1] + (q[1] - p[1]) * f),
+        Math.round(p[2] + (q[2] - p[2]) * f),
+        Math.round(p[3] + (q[3] - p[3]) * f)
+      ]);
+    }
+  })();
+
+  function drawGlobe(t) {
+    var cx = W / 2, cy = H * 0.5;
+    var cosA = Math.cos(AXIS), sinA = Math.sin(AXIS);
+    spin += 0.0035 + energy * 0.014;
+    var i, p;
+
+    // 大气光晕（画在最底层当背景）
+    var s0 = SFOV / CAMD;
+    var halo = ctx.createRadialGradient(cx, cy, GR * 0.8 * s0, cx, cy, GR * 1.6 * s0);
+    halo.addColorStop(0, 'rgba(120,180,255,0.10)');
+    halo.addColorStop(0.6, 'rgba(120,180,255,' + (0.05 + bass * 0.07) + ')');
+    halo.addColorStop(1, 'rgba(120,180,255,0)');
+    ctx.fillStyle = halo;
+    ctx.fillRect(0, 0, W, H);
+
+    // 更新每根柱子的朝向（自转 + 地轴倾斜）与高度
+    for (i = 0; i < pillars.length; i++) {
+      p = pillars[i];
+      var lon = p.lon + spin;
+      var nx = p.cl * Math.sin(lon);
+      var ny = p.sl;
+      var nz = p.cl * Math.cos(lon);
+      p.x = nx;
+      p.y = ny * cosA - nz * sinA;
+      p.z = ny * sinA + nz * cosA;
+      var act = Math.sin(p.x * 0.0055 + t * 0.25) * Math.cos(p.y * 0.0062 - t * 0.19) * Math.sin(p.z * 0.0048 + t * 0.13);
+      if (act < 0) act = 0;
+      var target = 12 + act * bands[p.freq] * 330;
+      pillarH[i] += (target - pillarH[i]) * 0.22;
+    }
+
+    // 只画朝向相机的球冠，按远 → 近排序
+    var vis = [];
+    var horizon = -GR / CAMD;
+    for (i = 0; i < pillars.length; i++) {
+      if (pillars[i].z < horizon - 0.015) vis.push(pillars[i]);
+    }
+    vis.sort(function (a, b) { return b.z - a.z; });
+
+    function proj(x, y, z) {
+      var s = SFOV / (z + CAMD);
+      return [cx + x * s, cy - y * s];
+    }
+
+    var LX = -0.45, LY = 0.62, LZ = -0.65; // 光源方向
+
+    for (i = 0; i < vis.length; i++) {
+      p = vis[i];
+      var h = pillarH[p.idx];
+
+      // 局部切向 t1 / t2，柱子截面就铺在这个平面上
+      var ux, uy, uz;
+      if (p.y > 0.94 || p.y < -0.94) { ux = 0; uy = 0; uz = 1; }
+      else { ux = 0; uy = 1; uz = 0; }
+      var t1x = p.y * uz - p.z * uy, t1y = p.z * ux - p.x * uz, t1z = p.x * uy - p.y * ux;
+      var l1 = Math.sqrt(t1x * t1x + t1y * t1y + t1z * t1z) || 1;
+      t1x /= l1; t1y /= l1; t1z /= l1;
+      var t2x = p.y * t1z - p.z * t1y, t2y = p.z * t1x - p.x * t1z, t2z = p.x * t1y - p.y * t1x;
+
+      var b0x = p.x * GR, b0y = p.y * GR, b0z = p.z * GR;
+      var R1 = GR + h;
+      var b1x = p.x * R1, b1y = p.y * R1, b1z = p.z * R1;
+
+      var b = [], tp = [];
+      for (var c = 0; c < 4; c++) {
+        var a1 = (c === 0 || c === 3) ? -Q : Q;
+        var a2 = (c === 0 || c === 1) ? -Q : Q;
+        b.push(proj(b0x + a1 * t1x + a2 * t2x, b0y + a1 * t1y + a2 * t2y, b0z + a1 * t1z + a2 * t2z));
+        tp.push(proj(b1x + a1 * t1x + a2 * t2x, b1y + a1 * t1y + a2 * t2y, b1z + a1 * t1z + a2 * t2z));
+      }
+
+      var tt = Math.max(0, Math.min(1, h / 330));
+      var col = LUT[(tt * 255) | 0];
+
+      // 四个侧面只画朝向相机的；外法线依次是 -t2, +t1, +t2, -t1
+      var vx = -p.x * GR, vy = -p.y * GR, vz = -CAMD - p.z * GR;
+      var NRM = [[-t2x, -t2y, -t2z], [t1x, t1y, t1z], [t2x, t2y, t2z], [-t1x, -t1y, -t1z]];
+      for (var k = 0; k < 4; k++) {
+        var m = NRM[k];
+        if (m[0] * vx + m[1] * vy + m[2] * vz <= 0) continue;
+        var lam = m[0] * LX + m[1] * LY + m[2] * LZ;
+        if (lam < 0) lam = 0;
+        var sh = 0.26 + 0.74 * lam;
+        var k2 = (k + 1) & 3;
+        ctx.fillStyle = 'rgb(' + Math.round(col[0] * sh) + ',' + Math.round(col[1] * sh) + ',' + Math.round(col[2] * sh) + ')';
+        ctx.beginPath();
+        ctx.moveTo(b[k][0], b[k][1]);
+        ctx.lineTo(b[k2][0], b[k2][1]);
+        ctx.lineTo(tp[k2][0], tp[k2][1]);
+        ctx.lineTo(tp[k][0], tp[k][1]);
+        ctx.closePath();
+        ctx.fill();
+      }
+
+      // 顶面（法线就是球面法线）
+      var lamT = p.x * LX + p.y * LY + p.z * LZ;
+      if (lamT < 0) lamT = 0;
+      var shT = 0.42 + 0.58 * lamT;
+      ctx.fillStyle = 'rgb(' + Math.round(col[0] * shT) + ',' + Math.round(col[1] * shT) + ',' + Math.round(col[2] * shT) + ')';
+      ctx.beginPath();
+      ctx.moveTo(tp[0][0], tp[0][1]);
+      ctx.lineTo(tp[1][0], tp[1][1]);
+      ctx.lineTo(tp[2][0], tp[2][1]);
+      ctx.lineTo(tp[3][0], tp[3][1]);
+      ctx.closePath();
+      ctx.fill();
+    }
+  }
+
+  // ---------- 效果 3：律动隧道 ----------
+  var RINGS = 22, SEG = 30, GAP = 190;
+  var tunnelOffset = 0;
+  function drawTunnel(t) {
+    var cx = W / 2, cy = H / 2;
+    tunnelOffset = (tunnelOffset + 2.4 + energy * 13) % GAP;
+    for (var r = RINGS - 1; r >= 0; r--) {
+      var z = r * GAP - tunnelOffset + 60;
+      if (z < 25) continue;
+      var sc = FOV / (FOV + z);
+      var wob = Math.sin(z * 0.0035 - t * 1.6) * 40;
+      var rad = (215 + wob + bass * 150) * (1 + beat * 0.12);
+      var a = Math.min(0.95, (1 - z / (RINGS * GAP)) * 1.15);
+      ctx.strokeStyle = 'hsla(' + (200 + z * 0.02 + treble * 70) + ',85%,' + (46 + energy * 36) + '%,' + a + ')';
+      ctx.lineWidth = Math.max(0.5, 2.5 * sc);
+      ctx.beginPath();
+      for (var s = 0; s <= SEG; s++) {
+        var ang = s / SEG * Math.PI * 2 + t * 0.15 + z * 0.0012;
+        var px = cx + Math.cos(ang) * rad * sc;
+        var py = cy + Math.sin(ang) * rad * sc * 0.84;
+        if (s) ctx.lineTo(px, py); else ctx.moveTo(px, py);
+      }
+      ctx.stroke();
+    }
+    var g = ctx.createRadialGradient(cx, cy, 0, cx, cy, 110 + bass * 240);
+    g.addColorStop(0, 'rgba(255,255,255,' + (0.08 + beat * 0.30) + ')');
+    g.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, W, H);
+  }
+
+  // ---------- 效果 4：线框球体 ----------
+  var rotY = 0, rotX = 0.32;
+  function drawSphere() {
+    var cx = W / 2, cy = H / 2;
+    rotY += 0.004 + energy * 0.022;
+    var LAT = 14, LON = 26;
+    var pts = [];
+    for (var i = 0; i <= LAT; i++) {
+      var v = i / LAT * Math.PI;
+      var rr = 215 + bands[Math.min(BANDS - 1, Math.round(i / LAT * (BANDS - 1)))] * 150;
+      var row = [];
+      for (var j = 0; j <= LON; j++) {
+        var u = j / LON * Math.PI * 2;
+        var x = Math.sin(v) * Math.cos(u) * rr;
+        var y = Math.cos(v) * rr;
+        var z = Math.sin(v) * Math.sin(u) * rr;
+        var x2 = x * Math.cos(rotY) - z * Math.sin(rotY);
+        var z2 = x * Math.sin(rotY) + z * Math.cos(rotY);
+        var y2 = y * Math.cos(rotX) - z2 * Math.sin(rotX);
+        var z3 = y * Math.sin(rotX) + z2 * Math.cos(rotX);
+        row.push([x2, y2, z3]);
+      }
+      pts.push(row);
+    }
+    function proj(p) {
+      var s = FOV / (FOV + p[2] + 900);
+      return [cx + p[0] * s, cy + p[1] * s];
+    }
+    var i2, j2, q;
+    for (i2 = 0; i2 <= LAT; i2++) {
+      ctx.beginPath();
+      for (j2 = 0; j2 <= LON; j2++) {
+        q = proj(pts[i2][j2]);
+        if (j2) ctx.lineTo(q[0], q[1]); else ctx.moveTo(q[0], q[1]);
+      }
+      ctx.strokeStyle = 'hsla(' + (195 + i2 * 6 + bass * 55) + ',85%,' + (50 + energy * 32) + '%,0.55)';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+    }
+    for (j2 = 0; j2 <= LON; j2++) {
+      ctx.beginPath();
+      for (i2 = 0; i2 <= LAT; i2++) {
+        q = proj(pts[i2][j2]);
+        if (i2) ctx.lineTo(q[0], q[1]); else ctx.moveTo(q[0], q[1]);
+      }
+      ctx.strokeStyle = 'hsla(' + (212 + j2 * 4 + treble * 45) + ',80%,' + (46 + energy * 36) + '%,0.38)';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+    }
+  }
+
+  // ---------- 效果 5：棋盘地形（参考 Sonic Topography 的"地面 EQ"思路） ----------
+  // 平面棋盘网格，柱子高度由 8 段频段分工驱动：
+  // SUB BASS 抬中心 / LOW MID 走慢波 / MID 走方向流 / HIGH MID 出尖峰 / PRESENCE 触发闪光 / AIR 做颗粒
+  // 再加节拍涟漪与流星。
+  var TP_PITCH = 0.92, TP_CAMD = 1500;
+  var TGRID = 44, TCELL = 44, TQ = 13;
+  var tpSeed = Math.random() * 10;
+  var ripples = [];
+  var beatMark = 0;
+
+  // 灰阶色带（配合主站深色调）：低处暗灰 → 高处近白
+  var LUT2 = [];
+  (function buildLUT2() {
+    var stops = [
+      [0.00, 38, 40, 46],
+      [0.30, 88, 91, 100],
+      [0.55, 143, 147, 158],
+      [0.78, 199, 203, 213],
+      [1.00, 245, 247, 252]
+    ];
+    for (var i = 0; i < 256; i++) {
+      var tv = i / 255, s = 0;
+      while (s < stops.length - 2 && tv > stops[s + 1][0]) s++;
+      var p = stops[s], q = stops[s + 1];
+      var f = Math.max(0, Math.min(1, (tv - p[0]) / (q[0] - p[0])));
+      LUT2.push([
+        Math.round(p[1] + (q[1] - p[1]) * f),
+        Math.round(p[2] + (q[2] - p[2]) * f),
+        Math.round(p[3] + (q[3] - p[3]) * f)
+      ]);
+    }
+  })();
+
+  function drawTopography(t) {
+    var cx = W / 2, cy = H * 0.68;
+    var cosP = Math.cos(TP_PITCH), sinP = Math.sin(TP_PITCH);
+    var half = (TGRID - 1) / 2;
+    var maxR = half * TCELL;
+    // 焦距按屏宽反算：让最近一排刚好铺出屏幕外，避免只有中间一小块、四周留空
+    var fov = W * 1.35 * (TP_CAMD - maxR * cosP) / (2 * maxR);
+
+    function proj(x, y, z) {
+      var ry = y * cosP + z * sinP;
+      var rz = -y * sinP + z * cosP;
+      var s = fov / (rz + TP_CAMD);
+      return [cx + x * s, cy - ry * s, s];
+    }
+
+    function bandAvg(lo, hi) {
+      var sum = 0;
+      for (var i = lo; i <= hi; i++) sum += bands[i];
+      return sum / (hi - lo + 1);
+    }
+    var subBass = bandAvg(0, 3);      // 中心抬升
+    var lowMid = bandAvg(8, 13);      // 慢波流动
+    var mid = bandAvg(14, 21);        // 方向流
+    var highMid = bandAvg(22, 29);    // 尖峰
+    var presence = bandAvg(30, 37);   // 闪光触发
+    var air = bandAvg(44, 47);        // 空气颗粒
+
+    // 低冲击到高点时触发一圈涟漪
+    if (bass - beatMark > 0.18) { ripples.push({ t0: t, amp: bass }); beatMark = bass; }
+    if (bass < beatMark) beatMark = bass * 0.92;
+    while (ripples.length && t - ripples[0].t0 > 3.2) ripples.shift();
+
+    // 暗色底盘
+    var gA = proj(-maxR - TCELL, 0, -maxR - TCELL), gB = proj(maxR + TCELL, 0, -maxR - TCELL),
+        gC = proj(maxR + TCELL, 0, maxR + TCELL), gD = proj(-maxR - TCELL, 0, maxR + TCELL);
+    // 底盘也压低不透明度，避免形成一块挡住主站背景的实心暗板
+    ctx.fillStyle = 'rgba(10,12,16,0.34)';
+    ctx.beginPath();
+    ctx.moveTo(gA[0], gA[1]); ctx.lineTo(gB[0], gB[1]);
+    ctx.lineTo(gC[0], gC[1]); ctx.lineTo(gD[0], gD[1]);
+    ctx.closePath();
+    ctx.fill();
+
+    for (var row = TGRID - 1; row >= 0; row--) {
+      var z = (row - half) * TCELL;
+      for (var col = 0; col < TGRID; col++) {
+        var x = (col - half) * TCELL;
+        var dist = Math.sqrt(x * x + z * z);
+
+        var center = Math.exp(-(dist * dist) / (maxR * maxR * 0.10)) * subBass * 185;
+        var wave = (Math.sin(x * 0.012 + t * 0.6) * Math.cos(z * 0.010 - t * 0.45) * 0.5 + 0.5) * lowMid * 96;
+        var flow = (Math.sin((x + z) * 0.016 - t * 1.1) * 0.5 + 0.5) * mid * 74;
+        var spikeSeed = Math.sin(x * 0.037 + tpSeed) * Math.cos(z * 0.029 - tpSeed);
+        var spike = spikeSeed > 0.86 ? highMid * 145 : 0;
+        var spark = Math.sin(x * 0.05 + tpSeed) * Math.cos(z * 0.043 - tpSeed) > 0.87 ? presence * 122 : 0;
+        var grain = air * 26 * (Math.sin(x * 0.09 + t * 3) * Math.cos(z * 0.08 - t * 2.4) * 0.5 + 0.5);
+
+        var rip = 0;
+        for (var ri = 0; ri < ripples.length; ri++) {
+          var age = t - ripples[ri].t0;
+          var d = Math.abs(dist - age * 620);
+          if (d < 220) rip += Math.cos(d / 220 * Math.PI / 2) * ripples[ri].amp * 92 * Math.max(0, 1 - age / 3.2);
+        }
+
+        var h = 8 + center + wave + flow + spike + spark + grain + rip;
+        var tt = Math.max(0, Math.min(1, h / 212));
+        var c = LUT2[(tt * 255) | 0];
+
+        var t0 = proj(x - TQ, h, z - TQ), t1 = proj(x + TQ, h, z - TQ),
+            t2 = proj(x + TQ, h, z + TQ), t3 = proj(x - TQ, h, z + TQ);
+        var f0 = proj(x - TQ, 0, z - TQ), f1 = proj(x + TQ, 0, z - TQ);
+
+        // 侧面（只画朝视轴的一侧）
+        if (x > TCELL * 0.5) {
+          var sA = proj(x - TQ, 0, z + TQ), sB = proj(x - TQ, h, z + TQ);
+          ctx.fillStyle = 'rgba(' + Math.round(c[0] * 0.42) + ',' + Math.round(c[1] * 0.42) + ',' + Math.round(c[2] * 0.42) + ',' + (0.10 + tt * 0.16) + ')';
+          ctx.beginPath();
+          ctx.moveTo(f0[0], f0[1]); ctx.lineTo(sA[0], sA[1]);
+          ctx.lineTo(sB[0], sB[1]); ctx.lineTo(t0[0], t0[1]);
+          ctx.closePath(); ctx.fill();
+        } else if (x < -TCELL * 0.5) {
+          var sC = proj(x + TQ, 0, z + TQ), sD = proj(x + TQ, h, z + TQ);
+          ctx.fillStyle = 'rgba(' + Math.round(c[0] * 0.42) + ',' + Math.round(c[1] * 0.42) + ',' + Math.round(c[2] * 0.42) + ',' + (0.10 + tt * 0.16) + ')';
+          ctx.beginPath();
+          ctx.moveTo(f1[0], f1[1]); ctx.lineTo(sC[0], sC[1]);
+          ctx.lineTo(sD[0], sD[1]); ctx.lineTo(t1[0], t1[1]);
+          ctx.closePath(); ctx.fill();
+        }
+
+        // 正面（半透明，越高的柱子越实）
+        ctx.fillStyle = 'rgba(' + Math.round(c[0] * 0.58) + ',' + Math.round(c[1] * 0.58) + ',' + Math.round(c[2] * 0.58) + ',' + (0.22 + tt * 0.34) + ')';
+        ctx.beginPath();
+        ctx.moveTo(f0[0], f0[1]); ctx.lineTo(f1[0], f1[1]);
+        ctx.lineTo(t1[0], t1[1]); ctx.lineTo(t0[0], t0[1]);
+        ctx.closePath(); ctx.fill();
+
+        // 顶面（半透明：低处几乎融进背景，高处接近实的浅灰）
+        ctx.fillStyle = 'rgba(' + c[0] + ',' + c[1] + ',' + c[2] + ',' + (0.42 + tt * 0.52) + ')';
+        ctx.beginPath();
+        ctx.moveTo(t0[0], t0[1]); ctx.lineTo(t1[0], t1[1]);
+        ctx.lineTo(t2[0], t2[1]); ctx.lineTo(t3[0], t3[1]);
+        ctx.closePath(); ctx.fill();
+      }
+    }
+
+  }
+
+  // ---------- 主循环 ----------
+  var demo = 0;
+  var start = performance.now();
+  var frames = 0, fpsClock = start;
+  var elName = document.getElementById('name');
+  var elBass = document.getElementById('barBass');
+  var elTre = document.getElementById('barTre');
+  var elFps = document.getElementById('fps');
+  var elSrc = document.getElementById('src');
+
+  function frame(now) {
+    var t = (now - start) / 1000;
+    sampleBands(t);
+
+    ctx.globalCompositeOperation = 'source-over';
+    // 城市需要干净背景（拖影会把立方体糊掉），其余效果保留轻微拖影
+    // 地球与棋盘地形都需要干净背景，拖影会把立方体糊掉
+    ctx.fillStyle = (demo === 1 || demo === 4) ? '#08080a' : 'rgba(8,8,10,' + (demo === 3 ? 0.17 : 0.3) + ')';
+    ctx.fillRect(0, 0, W, H);
+
+    ctx.globalCompositeOperation = (demo === 0 || demo === 2) ? 'lighter' : 'source-over';
+    if (demo === 0) drawStars();
+    else if (demo === 1) drawGlobe(t);
+    else if (demo === 2) drawTunnel(t);
+    else if (demo === 4) drawTopography(t);
+    else drawSphere();
+    ctx.globalCompositeOperation = 'source-over';
+
+    elBass.style.width = Math.min(100, bass * 130) + '%';
+    elTre.style.width = Math.min(100, treble * 190) + '%';
+
+    frames++;
+    if (now - fpsClock > 500) {
+      elFps.textContent = 'FPS ' + Math.round(frames * 1000 / (now - fpsClock));
+      frames = 0;
+      fpsClock = now;
+    }
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+
+  // ---------- 交互 ----------
+  var buttons = document.querySelectorAll('button[data-demo]');
+  function selectDemo(index) {
+    demo = index;
+    elName.textContent = NAMES[index];
+    for (var i = 0; i < buttons.length; i++) {
+      buttons[i].classList.toggle('on', Number(buttons[i].dataset.demo) === index);
+    }
+    ctx.fillStyle = '#08080a';
+    ctx.fillRect(0, 0, W, H);
+  }
+  for (var i = 0; i < buttons.length; i++) {
+    buttons[i].addEventListener('click', function () {
+      selectDemo(Number(this.dataset.demo));
+    });
+  }
+
+  var playBtn = document.getElementById('play');
+  function togglePlay() {
+    initAudio();
+    if (!audioEl) {
+      elSrc.textContent = '音源：浏览器不支持 Web Audio，使用模拟节拍';
+      return;
+    }
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+    if (audioEl.paused) {
+      audioEl.play().then(function () {
+        playBtn.textContent = '暂停音乐';
+        elSrc.textContent = '音源：真实频谱 · ' + decodeURIComponent(audioEl.src.split('/').pop());
+      }).catch(function () {
+        playBtn.textContent = '播放音乐';
+        elSrc.textContent = '音源：音频加载失败，继续使用模拟节拍';
+      });
+    } else {
+      audioEl.pause();
+      playBtn.textContent = '播放音乐';
+      elSrc.textContent = '音源：模拟节拍（点击播放切到真实频谱）';
+    }
+  }
+  playBtn.addEventListener('click', togglePlay);
+
+  window.addEventListener('keydown', function (e) {
+    if (e.key >= '1' && e.key <= '5') selectDemo(Number(e.key) - 1);
+    if (e.code === 'Space') { e.preventDefault(); togglePlay(); }
+  });
+
+  var tiltInput = document.getElementById('tilt');
+  var tiltVal = document.getElementById('tiltVal');
+  tiltInput.addEventListener('input', function () {
+    AXIS = Number(this.value) / 100;
+    tiltVal.textContent = AXIS.toFixed(2);
+  });
+
+  selectDemo(1);
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,10 @@
+.spotify.env.local
+node_modules/
+dist/
+.workbuddy/
+.git-info.txt
+build-log.txt
+build-summary.txt
+mobile-css.txt
+rename-log.txt
+rename-plan.txt
