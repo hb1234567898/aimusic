@@ -489,22 +489,37 @@ function Universe({ current, playing, currentTime, duration, onSelect, zoom, bac
       // 横向每一列就是一段频率：正中间那列最低频（底鼓），越往两侧越高频（军鼓、镲）。
       // 柱子高度只由「自己这一列」的频段能量决定，不再是全场一起抬，
       // 所以哪一段在响、响多重，直接看柱高轮廓就分得出来。
-      // 间距（cell）调密、格数（grid）补回来，铺开的总面积由 fov 自动补平，画面不会缩水。
-      const grid = mobile ? 24 : 40;
-      const cell = mobile ? 23 : 24;
-      const q = cell * (mobile ? 0.3 : 0.31);
-      const half = (grid - 1) / 2;
-      const maxR = half * cell;
+      //
+      // 网格参数全部按屏幕反推，而不是写死世界坐标尺寸 —— 这是两端观感一致的关键。
+      // 旧写法固定 cell 和 maxR，焦距由屏宽反算，结果桌面（1440 宽）的近排投影比例
+      // s 是手机的近两倍，整片地形纵向被拉到 1300px（屏高才 900），柱子越过屏幕顶部，
+      // 看着就是一层白色竖条纹，完全没有柱状感。
+      // 现在改成：先定「最近一排 1:1 像素」（s近 = 1），再让屏幕间距落在固定像素值上，
+      // 于是柱子在世界坐标里的尺寸就等于它在屏幕上的尺寸，手机和桌面看到的是同一套比例。
+      const cosP = Math.cos(TOPO_PITCH);
+      const sinP = Math.sin(TOPO_PITCH);
+      // 横向覆盖 = 屏宽 × cover，铺满并稍微溢出，避免两侧留空
+      const maxX = width * (mobile ? 1.5 : 1.35) / 2;
+      // 目标屏幕间距（px）：决定柱子有多密。横向、纵向共用，格子看起来才是方的
+      const spacing = mobile ? 24 : 28;
+      const cols = Math.max(10, Math.round(maxX * 2 / spacing));
+      const cellX = maxX * 2 / (cols - 1);
+      // 纵向半径按屏高定：跨度约占屏高四成，地形落在画面中下部
+      const maxZ = height * 0.3;
+      const rows = Math.max(8, Math.round(maxZ * 2 / spacing));
+      const cellZ = maxZ * 2 / (rows - 1);
+      const halfX = (cols - 1) / 2;
+      const halfZ = (rows - 1) / 2;
+      // 柱子宽度取间距的一半：一半实一半空，才看得出是一根根的柱子，
+      // 而不是一条连续的墙。之前取 0.3，间隙只剩十来个像素，整片糊在屏幕上。
+      const q = cellX * 0.25;
       const cx = width * 0.5;
       const cy = height * (mobile ? 0.62 : 0.68);
       // 水波纹只在重拍和高潮段放出来，圆心回到地形正中，和中间那列低频柱对齐
       const beatX = 0;
       const beatZ = 0;
-      const cosP = Math.cos(TOPO_PITCH);
-      const sinP = Math.sin(TOPO_PITCH);
-      // 焦距按屏宽反算：让最近一排刚好铺出屏幕外，避免只有中间一小块、四周留空
-      const nearSpan = width * (mobile ? 1.5 : 1.35);
-      const fov = nearSpan * (TOPO_CAMD - maxR * cosP) / (2 * maxR);
+      // 焦距锁在「最近一排」上：s = fov / (rz + CAMD)，rz 取 -maxZ*cosP 时正好为 1
+      const fov = TOPO_CAMD - maxZ * cosP;
       const bandAvg = (lo, hi) => {
         let sum = 0;
         for (let i = lo; i <= hi; i += 1) sum += topoBands[i];
@@ -519,10 +534,10 @@ function Universe({ current, playing, currentTime, duration, onSelect, zoom, bac
       };
 
       // 底盘只做极轻的压暗，避免变成一块挡住页面底色的实心板
-      const gA = proj(-maxR - cell, 0, -maxR - cell);
-      const gB = proj(maxR + cell, 0, -maxR - cell);
-      const gC = proj(maxR + cell, 0, maxR + cell);
-      const gD = proj(-maxR - cell, 0, maxR + cell);
+      const gA = proj(-maxX - cellX, 0, -maxZ - cellZ);
+      const gB = proj(maxX + cellX, 0, -maxZ - cellZ);
+      const gC = proj(maxX + cellX, 0, maxZ + cellZ);
+      const gD = proj(-maxX - cellX, 0, maxZ + cellZ);
       context.beginPath();
       context.moveTo(gA[0], gA[1]);
       context.lineTo(gB[0], gB[1]);
@@ -533,18 +548,18 @@ function Universe({ current, playing, currentTime, duration, onSelect, zoom, bac
       context.fill();
 
       // 从远到近画，保证近处的柱子盖住远处的（画家算法）
-      for (let row = grid - 1; row >= 0; row -= 1) {
-        const z = (row - half) * cell;
+      for (let row = rows - 1; row >= 0; row -= 1) {
+        const z = (row - halfZ) * cellZ;
         // 这一行取瀑布里的哪一帧：越远 = 越早。
         // 时间差只留 6 帧（约 0.2 秒）：整片柱子基本同步地原地升高回落，只带一点
         // 从远到近的流动感。摊到一两秒就成了缓慢滚动的地形，反而看不出柱子在跳。
-        const age = Math.round(row / (grid - 1) * TOPO_HIST_LAG);
+        const age = Math.round(row / (rows - 1) * TOPO_HIST_LAG);
         const base = (((topoHistHead - age) % TOPO_HISTORY) + TOPO_HISTORY) % TOPO_HISTORY * TOPO_BANDS;
         const near = 1 - age / TOPO_HIST_LAG;
-        for (let col = 0; col < grid; col += 1) {
-          const x = (col - half) * cell;
+        for (let col = 0; col < cols; col += 1) {
+          const x = (col - halfX) * cellX;
           // 频率位置：0 = 正中间那列（最低频），1 = 最外侧（最高频）
-          const fpos = Math.min(1, Math.abs(col - half) / half);
+          const fpos = Math.min(1, Math.abs(col - halfX) / halfX);
           // 这一列对应的频段，做线性插值，柱高才不会一格一格地跳。
           // 从 idx2 起步：idx0 只盖住 0~47Hz 一个 bin，能量天生偏低，
           // 落在正中间会挖出一条莫名其妙的沟；idx16 到头，再往上基本是空气。
@@ -560,18 +575,25 @@ function Universe({ current, playing, currentTime, duration, onSelect, zoom, bac
           const wHigh = 1 - Math.exp(-(fpos * fpos) / 0.3);
           // 引擎归一化后的量做增益，不同母带响度的歌柱高才一致
           const gain = 0.82 + engineBass * 0.14 * wLow + engineHigh * 0.22 * wHigh;
-          const bd = Math.sqrt((x - beatX) * (x - beatX) + (z - beatZ) * (z - beatZ));
-          // 主驱动就是柱高本身：自己这一列的频段能量
-          // 高潮段整体再抬一点，副歌进来时地形会明显「长高」一截
-          const spectral = bandShaped * (mobile ? 164 : 150) * gain * (1 + topoClimax * 0.22);
+          const dxr = x - beatX;
+          const dzr = z - beatZ;
+          // 涟漪按「屏幕上看起来的距离」往外推：横向 1 单位 = s 像素，
+          // 深度方向 1 单位只投影出 sinP×s 像素。先把 z 压一下，
+          // 圈在屏幕上才是圆的；不压的话深度方向会被拉成一条长椭圆。
+          const bd = Math.sqrt(dxr * dxr + dzr * dzr * sinP * sinP);
+          // 主驱动就是柱高本身：自己这一列的频段能量。
+          // 高潮段整体再抬一点，副歌进来时地形会明显「长高」一截。
+          // 高度不再分端：两端最近一排的投影比例都是 1:1 像素，
+          // 同一个 h 值在手机和桌面上就是同样的屏幕高度。
+          const spectral = bandShaped * 132 * gain * (1 + topoClimax * 0.22);
           // 底鼓：中间那条低频带整条窜起来，打一下窜一下
           const swellLow = subBass * 16 * wLow;
           // 打击的抬升近处给满、远处留三成：远处那几行已经是「过去」了，
           // 完全跟着一起窜会像整块地形在整体呼吸，看不出是这一拍砸下来的；
           // 一点都不给又只剩最近一行在动，整个地形看着太死。
-          const punchLow = hit * 50 * wLow * (mobile ? 1.25 : 1) * (0.3 + 0.7 * near);
+          const punchLow = hit * 60 * wLow * (0.3 + 0.7 * near);
           // 镲和军鼓：外圈的柱子跟着抖
-          const punchHigh = hitHigh * 48 * wHigh * (mobile ? 1.3 : 1) * (0.3 + 0.7 * near);
+          const punchHigh = hitHigh * 60 * wHigh * (0.3 + 0.7 * near);
           // 深度方向留一点起伏，同一列不至于长得一模一样
           const depth = (Math.sin(z * 0.021 + time * 0.5 + fpos * 4) * 0.5 + 0.5) * bandShaped * 16;
           // 水波纹：只有重拍和高潮段推得出来，平时为 0，画面交给柱高去表达
@@ -580,18 +602,24 @@ function Universe({ current, playing, currentTime, duration, onSelect, zoom, bac
             const r = topoRipples[ri];
             const age = time - r.t0;
             const d = Math.abs(bd - age * r.speed);
-            if (d < r.width) rip += Math.cos(d / r.width * Math.PI / 2) * r.amp * (mobile ? 88 : 76) * Math.max(0, 1 - age / 2.8);
+            if (d < r.width) rip += Math.cos(d / r.width * Math.PI / 2) * r.amp * 84 * Math.max(0, 1 - age / 2.8);
           }
-          // 静止时也留一层极缓的呼吸，画面不至于完全死掉
-          const idle = 5 * (Math.sin(x * 0.006 + time * 0.35) * Math.cos(z * 0.005 - time * 0.28) * 0.5 + 0.5);
+          // 静止时也留一层极缓的呼吸，画面不至于完全死掉。
+          // 用归一化坐标而不是绝对坐标：两端的地形世界尺寸差三倍，
+          // 写死频率会让桌面的呼吸波密得像噪点、手机却几乎看不到。
+          const idle = 5 * (Math.sin(x / maxX * 1.8 + time * 0.35) * Math.cos(z / maxZ * 1.2 - time * 0.28) * 0.5 + 0.5);
           const h = 5 + spectral + swellLow + punchLow + punchHigh + depth + rip + idle;
-          const tt = clamp(h / 235, 0, 1);
+          const tt = clamp(h / 250, 0, 1);
           const c = topoLut[(tt * 255) | 0];
-          // 低频柱偏暖、高频柱偏冷，扫一眼就分得出是哪一段在响
-          const warm = (0.45 - fpos) * 24;
-          const cr = clamp(c[0] + warm, 0, 255) | 0;
-          const cg = clamp(c[1] + warm * 0.15, 0, 255) | 0;
-          const cb = clamp(c[2] - warm * 1.15, 0, 255) | 0;
+          // 低频柱偏暖（琥珀）、高频柱偏冷（青蓝）。
+          // 原来的 ±24 太含蓄，各段都落回同一个灰白，扫一眼分不出是哪一段在响。
+          const warm = 1 - fpos * 2;
+          const cr = clamp(c[0] + warm * 52, 0, 255) | 0;
+          const cg = clamp(c[1] + warm * 10, 0, 255) | 0;
+          const cb = clamp(c[2] - warm * 40, 0, 255) | 0;
+          // 远处的柱子按深度淡出（雾效）：不加这层，前后排一样实，
+          // 整片柱子会连成一道平齐的「墙头」，看不出哪一根在自己跳。
+          const fog = 0.35 + 0.65 * near;
 
           const t0 = proj(x - q, h, z - q);
           const t1 = proj(x + q, h, z - q);
@@ -601,10 +629,10 @@ function Universe({ current, playing, currentTime, duration, onSelect, zoom, bac
           const f1 = proj(x + q, 0, z - q);
 
           // 侧面只画朝向视轴的那一侧
-          if (x > cell * 0.5) {
+          if (x > cellX * 0.5) {
             const sA = proj(x - q, 0, z + q);
             const sB = proj(x - q, h, z + q);
-            context.fillStyle = 'rgba(' + (cr * 0.42 | 0) + ',' + (cg * 0.42 | 0) + ',' + (cb * 0.42 | 0) + ',' + (0.03 + tt * 0.3) + ')';
+            context.fillStyle = 'rgba(' + (cr * 0.42 | 0) + ',' + (cg * 0.42 | 0) + ',' + (cb * 0.42 | 0) + ',' + ((0.03 + tt * 0.24) * fog) + ')';
             context.beginPath();
             context.moveTo(f0[0], f0[1]);
             context.lineTo(sA[0], sA[1]);
@@ -612,10 +640,10 @@ function Universe({ current, playing, currentTime, duration, onSelect, zoom, bac
             context.lineTo(t0[0], t0[1]);
             context.closePath();
             context.fill();
-          } else if (x < -cell * 0.5) {
+          } else if (x < -cellX * 0.5) {
             const sC = proj(x + q, 0, z + q);
             const sD = proj(x + q, h, z + q);
-            context.fillStyle = 'rgba(' + (cr * 0.42 | 0) + ',' + (cg * 0.42 | 0) + ',' + (cb * 0.42 | 0) + ',' + (0.03 + tt * 0.3) + ')';
+            context.fillStyle = 'rgba(' + (cr * 0.42 | 0) + ',' + (cg * 0.42 | 0) + ',' + (cb * 0.42 | 0) + ',' + ((0.03 + tt * 0.24) * fog) + ')';
             context.beginPath();
             context.moveTo(f1[0], f1[1]);
             context.lineTo(sC[0], sC[1]);
@@ -626,7 +654,7 @@ function Universe({ current, playing, currentTime, duration, onSelect, zoom, bac
           }
 
           // 正面
-          context.fillStyle = 'rgba(' + (cr * 0.58 | 0) + ',' + (cg * 0.58 | 0) + ',' + (cb * 0.58 | 0) + ',' + (0.05 + tt * 0.42) + ')';
+          context.fillStyle = 'rgba(' + (cr * 0.58 | 0) + ',' + (cg * 0.58 | 0) + ',' + (cb * 0.58 | 0) + ',' + ((0.05 + tt * 0.34) * fog) + ')';
           context.beginPath();
           context.moveTo(f0[0], f0[1]);
           context.lineTo(f1[0], f1[1]);
@@ -636,7 +664,7 @@ function Universe({ current, playing, currentTime, duration, onSelect, zoom, bac
           context.fill();
 
           // 顶面：越高的柱子越实
-          context.fillStyle = 'rgba(' + cr + ',' + cg + ',' + cb + ',' + (0.07 + tt * 0.52) + ')';
+          context.fillStyle = 'rgba(' + cr + ',' + cg + ',' + cb + ',' + ((0.06 + tt * 0.44) * fog) + ')';
           context.beginPath();
           context.moveTo(t0[0], t0[1]);
           context.lineTo(t1[0], t1[1]);
@@ -681,8 +709,10 @@ function Universe({ current, playing, currentTime, duration, onSelect, zoom, bac
       }
       // 底鼓给主打击感，镲和军鼓补一层碎拍，低频量和整体音量打底。
       // 高频只占小头：它触发得密，权重给大了画面会一直顶在半高，反而看不出重拍。
+      // 前端的缩放/发光补偿在 CSS 里按屏幕尺寸分档（小屏的同一个数值看着就是「没动静」），
+      // 这里不再重复分端，免得桌面端被压掉一截。
       beatPulse = clamp(
-        (hit * 0.54 + hitHigh * 0.18 + bassLevel * 0.2 + trebleLevel * 0.08 + energy * 0.24) * (mobile ? 1.28 : 1),
+        (hit * 0.54 + hitHigh * 0.18 + bassLevel * 0.2 + trebleLevel * 0.08 + energy * 0.24) * 1.2,
         0, 1
       );
       // 只在幅度真变了的时候写 CSS 变量：安卓上每帧改自定义属性会触发整棵子树重算样式
