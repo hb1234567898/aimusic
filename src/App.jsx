@@ -1,10 +1,17 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { tracks } from './tracks.js';
 import { ensureLrc, prefetchLrc, waitForLrc } from './lyrics.js';
-import { OUTPUT_MODES, applySink, listOutputs, readOutputPref, requestDeviceLabels, resumeAt, saveOutputPref, saveProgress } from './audioOut.js';
+import { BeatEngine } from './beatEngine.js';
+import { OUTPUT_MODES, applySink, listOutputs, readBeatOffset, readLastTrack, readOutputPref, requestDeviceLabels, resumeAt, saveBeatOffset, saveLastTrack, saveOutputPref, saveProgress } from './audioOut.js';
 
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 const backdropNames = ['星尘点阵', '声波轨道', '呼吸星云', '律动地形'];
+
+// 安卓内核（含微信 X5 / 老 WebView）按 UA 单独识别：
+// 它的音频输出延迟、调度策略和桌面 Chrome 完全不同，很多参数要单独给一套。
+const IS_ANDROID = /android/i.test(navigator.userAgent || '');
+// 手机 / 平板：有真实触摸点就算，不能只看宽度 —— 安卓横屏和平板都会被 600px 漏掉
+const isHandheld = () => IS_ANDROID || /iphone|ipad|ipod|mobile/i.test(navigator.userAgent || '') || (navigator.maxTouchPoints || 0) > 1;
 
 // 音源是否已经有足够数据连续播放（HAVE_FUTURE_DATA 及以上）
 function waitUntilPlayable(audio, timeout = 8000) {
@@ -102,7 +109,7 @@ function useMobile() {
   return mobile;
 }
 
-function LyricsPanel({ track, trackNumber, currentTime, duration, playing, audioRef }) {
+function LyricsPanel({ track, trackNumber, currentTime, duration, playing, audioRef, analysisRef }) {
   const [rows, setRows] = useState([{ time: 0, text: '正在载入本地同步歌词…' }]);
   const [state, setState] = useState('loading');
   const mobile = useMobile();
@@ -147,7 +154,11 @@ function LyricsPanel({ track, trackNumber, currentTime, duration, playing, audio
     }
     let frame = 0;
     const tick = () => {
-      const time = audio.currentTime || 0;
+      // 音频被 Web Audio 接管后，audio.currentTime 是解码位置，比耳朵听到的要靠前
+      // 整整一个输出延迟。歌词不减掉这段就会比人声早出来，所以和律动用同一个补偿量。
+      const engine = analysisRef?.current?.engine;
+      const latency = engine && engine.mode !== 'none' ? engine.latency : 0;
+      const time = Math.max(0, (audio.currentTime || 0) - latency);
       let index = 0;
       for (let rowIndex = 0; rowIndex < rows.length; rowIndex += 1) {
         if (time >= rows[rowIndex].time) index = rowIndex;
@@ -292,63 +303,54 @@ function Universe({ current, playing, currentTime, duration, onSelect, zoom, bac
 
     let beatPulse = 0;
     let playerElement = null;
+    let lyricsPanel = null;
+    let lastBeatValue = -1;
 
-    const audioEnergy = (time = 0) => {
+    // 每帧只采一次细频谱：地形要用，节拍引擎的兜底分支也可能要用。
+    // 之前地形和节拍各调一次 getByteFrequencyData，同一帧读两遍纯属浪费。
+    const sampleFine = () => {
       const analysis = analysisRef.current;
+      if (analysis.fine && analysis.fineBins) analysis.fine.getByteFrequencyData(analysis.fineBins);
+    };
+
+    // 能量与打击值统一从 BeatEngine 取。引擎内部已经做了三件事：
+    //   · 自动增益 —— 母带响度不同的歌也能把律动幅度撑到满量程，手机小屏上看得出来
+    //   · 输出延迟补偿 —— 画面按「此刻听到的声音」对齐，不再比声音早半拍
+    //   · 音频线程 onset —— 掉帧时也不会漏掉起振点
+    let energySmooth = 0;
+    const readAudio = (dt, time) => {
+      const analysis = analysisRef.current;
+      const playing = propsRef.current.playing;
+      const engine = analysis.engine;
+      let bass = 0;
+      let treble = 0;
+      let hit = 0;
+      let hitHigh = 0;
       let target = 0;
-      if (analysis.analyser && propsRef.current.playing) {
-        analysis.analyser.getByteFrequencyData(analysis.spectrum);
-        const usefulBins = Math.min(24, analysis.spectrum.length);
-        let total = 0;
-        let weight = 0;
-        for (let index = 0; index < usefulBins; index += 1) {
-          const w = 1 - index / usefulBins * 0.55;
-          total += analysis.spectrum[index] * w;
-          weight += w;
-        }
-        // 平均出来的能量常年趴在 0.2 上下，抬一点增益画面才动得起来
-        target = clamp(Math.pow(total / weight / 255 * 1.55, 0.85), 0, 1);
-      } else if (propsRef.current.playing) {
-        // 原生输出模式拿不到频谱，用一段缓慢的假呼吸顶上，画面不至于彻底死掉
+      if (playing && engine && engine.mode !== 'none') {
+        const frame = engine.sample(analysis.context ? analysis.context.currentTime : time, dt);
+        bass = frame.bass;
+        treble = frame.treble;
+        hit = frame.hit;
+        hitHigh = frame.hitHigh;
+        target = frame.level;
+      } else if (playing) {
+        // 原生输出模式 / 内核不支持接管：用一段缓慢的假呼吸顶上，画面不至于彻底死掉
         target = 0.2 + Math.sin(time * 1.1) * 0.07 + Math.sin(time * 0.37) * 0.05;
+        bass = 0.18 + Math.sin(time * 1.3) * 0.05;
+        treble = 0.16 + Math.sin(time * 1.9) * 0.05;
       }
       // 快起慢落：鼓点一上来就顶上去，收得慢一些。
       // 上升系数就是「打击感迟到多久」——0.45 约 3 帧才到位，手机 30fps 下就是 100ms，
       // 低延迟档提到 0.75，一帧就基本顶满。
       const attack = analysis.lowLatency ? 0.75 : 0.45;
-      analysis.energy += (target - analysis.energy) * (target > analysis.energy ? attack : 0.07);
-      return analysis.energy;
-    };
-
-    // 低频 onset 检测：低频能量突然冲起来就是一拍，给出一个 0~1 的打击值后快速衰减
-    const readBeat = dt => {
-      const analysis = analysisRef.current;
-      const playing = propsRef.current.playing;
-      let bass = 0;
-      if (analysis.fine && playing) {
-        analysis.fine.getByteFrequencyData(analysis.fineBins);
-        const nyquist = (analysis.context?.sampleRate || 44100) / 2;
-        const end = clamp(Math.round(150 / nyquist * analysis.fineBins.length), 3, analysis.fineBins.length - 1);
-        let total = 0;
-        for (let index = 1; index <= end; index += 1) total += analysis.fineBins[index];
-        bass = total / end / 255;
-      }
-      // 与一条慢速参考线比较，只看「增量」，低频持续响也不会一直判定成节拍。
-      // 参考线追得越快，onset 越尖锐（但也越容易被持续低音反复触发），低延迟档调快。
-      const flux = Math.max(0, bass - analysis.bassRef);
-      const refRate = analysis.lowLatency ? 0.5 : 0.3;
-      analysis.bassRef += (bass - analysis.bassRef) * refRate;
-      analysis.fluxAvg += (flux - analysis.fluxAvg) * Math.min(1, dt * 0.7);
-      analysis.beatGap = Math.max(0, analysis.beatGap - dt);
-      const threshold = Math.max(0.006, analysis.fluxAvg * 1.45 + 0.008);
-      let hit = 0;
-      if (playing && flux > threshold && analysis.beatGap <= 0) {
-        hit = 0.6 + clamp((flux - threshold) / 0.05, 0, 1) * 0.4;
-        // 冷却期间不再判定下一拍。100ms 在密集鼓点里会漏拍，低延迟档收到 70ms。
-        analysis.beatGap = analysis.lowLatency ? 0.07 : 0.1;
-      }
-      analysis.beat = Math.max(analysis.beat * Math.pow(0.05, dt / 0.32), hit);
-      return analysis.beat;
+      energySmooth += (target - energySmooth) * (target > energySmooth ? attack : 0.07);
+      analysis.energy = energySmooth;
+      analysis.bass = bass;
+      analysis.treble = treble;
+      analysis.beat = hit;
+      analysis.beatHigh = hitHigh;
+      return { energy: energySmooth, bass, treble, hit, hitHigh };
     };
 
     const dot = (x, y, radius, alpha) => {
@@ -387,25 +389,43 @@ function Universe({ current, playing, currentTime, duration, onSelect, zoom, bac
       }
     })();
     const topoBands = new Float32Array(TOPO_BANDS);
-    const topoSeed = Math.random() * 10;
+    // 每段频带换算好的柱高系数（0~1），画的时候直接插值取用
+    const topoNorm = new Float32Array(TOPO_BANDS);
+    // 频谱瀑布：每 30ms 存一帧，地形的深度方向就是时间轴，远处那几行放的是稍早的频谱。
+    // 只做横向频段的话，同一行的柱子高度全都一样，看上去就是一条跑道、分不出高频低频；
+    // 加上时间轴之后每根柱子的高度都不同，鼓点走过的轨迹也留在地形上了。
+    const TOPO_HISTORY = 32;
+    const TOPO_HIST_LAG = 6;   // 地形最远那一行比最近一行晚多少帧
+    const topoHist = new Float32Array(TOPO_BANDS * TOPO_HISTORY);
+    let topoHistHead = 0;
+    let topoHistLast = -1;
+    // 全场峰值的慢速参考线。不同歌的母带响度差很多，用它统一增益，
+    // 柱高才不会「这首歌全部顶满、那首歌全部贴地」。
+    let topoGlobal = 0.6;
     let topoRipples = [];
-    let topoBeatMark = 0;
+    // 一快一慢两条能量线，用来抓「节奏突然抬高」的那一刻
+    let topoFast = 0;
+    let topoSlow = 0;
+    let topoSurging = false;
+    let topoLastRipple = -99;
+    let topoClimax = 0;
 
-    const sampleTopo = time => {
+    const sampleTopo = (time, engineBass = 0, energy = 0) => {
       const analysis = analysisRef.current;
       let bass = 0;
       if (analysis.fine && propsRef.current.playing) {
+        // 频谱已经在 sampleFine() 里采过一遍了，这里直接用，别再读一次
         const bins = analysis.fineBins;
-        analysis.fine.getByteFrequencyData(bins);
         const usable = Math.floor(bins.length * 0.62);
         for (let i = 0; i < TOPO_BANDS; i += 1) {
           const lo = Math.floor(Math.pow(i / TOPO_BANDS, 1.7) * usable);
           const hi = Math.max(lo + 1, Math.floor(Math.pow((i + 1) / TOPO_BANDS, 1.7) * usable));
           let sum = 0;
           for (let k = lo; k < hi; k += 1) sum += bins[k];
-          // 频谱平均值偏小，统一抬增益，柱子才顶得起来
+          // 频谱平均值偏小，统一抬增益，柱子才顶得起来。
           const value = clamp(sum / (hi - lo) / 255 * 1.25, 0, 1);
-          topoBands[i] += (value - topoBands[i]) * (value > topoBands[i] ? 0.5 : 0.1);
+          // 快起快落：柱子要跟着鼓点一根一根地跳，回落慢了就糊成一片高低不分的墙。
+          topoBands[i] += (value - topoBands[i]) * (value > topoBands[i] ? 0.72 : 0.2);
         }
         for (let i = 0; i < 4; i += 1) bass += topoBands[i];
         bass /= 4;
@@ -413,33 +433,73 @@ function Universe({ current, playing, currentTime, duration, onSelect, zoom, bac
         // 没在播放时缓慢回落，最后只剩一层静态的矮格子
         for (let i = 0; i < TOPO_BANDS; i += 1) topoBands[i] += (0 - topoBands[i]) * 0.04;
       }
-      const lastRipple = topoRipples[topoRipples.length - 1];
-      const canRipple = !lastRipple || time - lastRipple.t0 > 0.2;
-      if (canRipple && (bass - topoBeatMark > 0.16 || beatPulse > 0.92)) {
-        topoRipples.push({ t0: time, amp: Math.max(bass, 0.6) });
-        topoBeatMark = bass;
+      // 全场峰值只跟最响的那一段走，慢慢升、慢慢退
+      let loudest = 0;
+      for (let i = 0; i < TOPO_BANDS; i += 1) if (topoBands[i] > loudest) loudest = topoBands[i];
+      topoGlobal = loudest > topoGlobal
+        ? topoGlobal + (loudest - topoGlobal) * 0.12
+        : topoGlobal * 0.999;
+      // 开方（0.72 次幂）把频段落差拉开：低频 0.77、中频 0.5、镲那片 0.02，
+      // 直接按绝对值画，中高频全部贴地一片；开方之后是 0.82 / 0.61 / 0.06，
+      // 各段的柱子都在自己的尺度上跳，而「中间高、两侧矮」的轮廓还留着。
+      // 幂次越大落差越明显，但也越压高频的动态，0.7 上下是个平衡点。
+      const gain = 1 / Math.max(0.45, topoGlobal);
+      for (let i = 0; i < TOPO_BANDS; i += 1) {
+        topoNorm[i] = Math.pow(clamp(topoBands[i] * gain, 0, 1), 0.72);
       }
-      if (bass < topoBeatMark) topoBeatMark = bass * 0.92;
-      while (topoRipples.length && time - topoRipples[0].t0 > 3.2) topoRipples.shift();
-      return bass;
+      // 按固定时间间隔推帧，不跟帧率绑定：手机掉到 30fps 时历史节奏才不会跟着变慢。
+      // 30ms 一帧 = 整片地形摊开约 1 秒，柱子原地跳动的节奏感还在；
+      // 拉长到 2 秒以上，看到的就是一片缓慢流动的地形，跳动感会被摊平。
+      if (time - topoHistLast >= 0.03) {
+        topoHistLast = time;
+        topoHistHead = (topoHistHead + 1) % TOPO_HISTORY;
+        const base = topoHistHead * TOPO_BANDS;
+        for (let i = 0; i < TOPO_BANDS; i += 1) topoHist[base + i] = topoNorm[i];
+      }
+      // 引擎的自动增益结果已经是归一化的，不同母带响度的歌隆起幅度才一致；
+      // 地形带的原始低频值只作为下限兜底。
+      const shaped = propsRef.current.playing && engineBass ? Math.max(bass, engineBass * 0.85) : bass;
+      // 燃点：整段音量和低频同时压在高位才算高潮。它只用来给柱子加一点整体高度，
+      // 不再是涟漪的触发条件 —— 高潮段每一拍都放水波的话，画面上永远有新圈在扩散。
+      const hot = propsRef.current.playing && engineBass > 0.7 && energy > 0.66;
+      topoClimax += ((hot ? 1 : 0) - topoClimax) * (hot ? 0.05 : 0.014);
+
+      // 水波纹只在「节奏突然抬高」的那一下出现：副歌进来、drop 砸下、密度上台阶。
+      // 判断方式是一快一慢两条能量线相比 —— 快线冲到慢线之上，说明是整体在抬，
+      // 而不是某一拍打得重。按单拍力度判定的话，低频一响就冒一圈，太滥。
+      // 用「边沿」触发：只在从「不陡」跨到「陡」的那一帧放，之后一直陡着也不再补。
+      const level = engineBass * 0.6 + energy * 0.4;
+      topoFast += (level - topoFast) * 0.06;
+      topoSlow += (level - topoSlow) * 0.004;
+      const surging = propsRef.current.playing && topoFast - topoSlow > 0.38;
+      if (surging && !topoSurging && time - topoLastRipple > 15) {
+        topoLastRipple = time;
+        // 突增的那一刻有多陡，圈就放多大
+        const amp = clamp(0.8 + (topoFast - topoSlow) * 1.6, 0.8, 1.35);
+        topoRipples.push({ t0: time, amp, speed: 760, width: 340 });
+      }
+      topoSurging = surging;
+
+      while (topoRipples.length && time - topoRipples[0].t0 > 2.8) topoRipples.shift();
+      return shaped;
     };
 
-    const drawTopography = (width, height, time) => {
+    const drawTopography = (width, height, time, engineBass = 0, engineHigh = 0, hit = 0, hitHigh = 0) => {
       const mobile = width < 600;
-      // 格子数是移动端渲染开销的大头（grid² 个四边形）。降到 17 约少三成绘制量，
-      // 帧率上去了，节拍采样才跟得上，律动才不会显得拖。
-      const grid = mobile ? 17 : 28;
-      const cell = mobile ? 40 : 46;
-      const q = cell * 0.29;
+      // 横向每一列就是一段频率：正中间那列最低频（底鼓），越往两侧越高频（军鼓、镲）。
+      // 柱子高度只由「自己这一列」的频段能量决定，不再是全场一起抬，
+      // 所以哪一段在响、响多重，直接看柱高轮廓就分得出来。
+      // 间距（cell）调密、格数（grid）补回来，铺开的总面积由 fov 自动补平，画面不会缩水。
+      const grid = mobile ? 24 : 40;
+      const cell = mobile ? 23 : 24;
+      const q = cell * (mobile ? 0.3 : 0.31);
       const half = (grid - 1) / 2;
       const maxR = half * cell;
       const cx = width * 0.5;
       const cy = height * (mobile ? 0.62 : 0.68);
-      // 移动端歌词块在左上角，而节拍隆起原本发生在地形正中，两者完全不呼应。
-      // 这里只把「节拍中心」往歌词那侧平移（横向 + 纵向往屏幕上方），
-      // 普通波形、噪点、气流仍以地形原点为基准，整体构图不变。
-      const beatX = mobile ? -maxR * 0.04 : 0;
-      const beatZ = mobile ? maxR * 0.82 : 0;
+      // 水波纹只在重拍和高潮段放出来，圆心回到地形正中，和中间那列低频柱对齐
+      const beatX = 0;
+      const beatZ = 0;
       const cosP = Math.cos(TOPO_PITCH);
       const sinP = Math.sin(TOPO_PITCH);
       // 焦距按屏宽反算：让最近一排刚好铺出屏幕外，避免只有中间一小块、四周留空
@@ -451,11 +511,6 @@ function Universe({ current, playing, currentTime, duration, onSelect, zoom, bac
         return sum / (hi - lo + 1);
       };
       const subBass = bandAvg(0, 2);
-      const lowMid = bandAvg(5, 8);
-      const mid = bandAvg(9, 14);
-      const highMid = bandAvg(15, 19);
-      const presence = bandAvg(20, 26);
-      const air = bandAvg(29, 31);
       const proj = (x, y, z) => {
         const ry = y * cosP + z * sinP;
         const rz = -y * sinP + z * cosP;
@@ -480,30 +535,63 @@ function Universe({ current, playing, currentTime, duration, onSelect, zoom, bac
       // 从远到近画，保证近处的柱子盖住远处的（画家算法）
       for (let row = grid - 1; row >= 0; row -= 1) {
         const z = (row - half) * cell;
+        // 这一行取瀑布里的哪一帧：越远 = 越早。
+        // 时间差只留 6 帧（约 0.2 秒）：整片柱子基本同步地原地升高回落，只带一点
+        // 从远到近的流动感。摊到一两秒就成了缓慢滚动的地形，反而看不出柱子在跳。
+        const age = Math.round(row / (grid - 1) * TOPO_HIST_LAG);
+        const base = (((topoHistHead - age) % TOPO_HISTORY) + TOPO_HISTORY) % TOPO_HISTORY * TOPO_BANDS;
+        const near = 1 - age / TOPO_HIST_LAG;
         for (let col = 0; col < grid; col += 1) {
           const x = (col - half) * cell;
-          const dist = Math.sqrt(x * x + z * z);
-          // 节拍中心：鼓点隆起、涟漪、整拍抬升都以它为核心（移动端已挪到歌词附近）
+          // 频率位置：0 = 正中间那列（最低频），1 = 最外侧（最高频）
+          const fpos = Math.min(1, Math.abs(col - half) / half);
+          // 这一列对应的频段，做线性插值，柱高才不会一格一格地跳。
+          // 从 idx2 起步：idx0 只盖住 0~47Hz 一个 bin，能量天生偏低，
+          // 落在正中间会挖出一条莫名其妙的沟；idx16 到头，再往上基本是空气。
+          const bandAt = 2 + fpos * 14;
+          const bi = bandAt | 0;
+          const bf = bandAt - bi;
+          const bj = Math.min(TOPO_BANDS - 1, bi + 1);
+          const bandVal = topoHist[base + bi] * (1 - bf) + topoHist[base + bj] * bf;
+          // 再压一点点外圈，轮廓更清楚：中间那几列低频柱最高，越往两侧越低
+          const bandShaped = clamp(bandVal, 0, 1) * (1 - fpos * 0.12);
+          // 低频带 / 高频带的权重：底鼓只管中间那几列，镲只管外圈
+          const wLow = Math.exp(-(fpos * fpos) / 0.16);
+          const wHigh = 1 - Math.exp(-(fpos * fpos) / 0.3);
+          // 引擎归一化后的量做增益，不同母带响度的歌柱高才一致
+          const gain = 0.82 + engineBass * 0.14 * wLow + engineHigh * 0.22 * wHigh;
           const bd = Math.sqrt((x - beatX) * (x - beatX) + (z - beatZ) * (z - beatZ));
-          const center = Math.exp(-(bd * bd) / (maxR * maxR * (mobile ? 0.07 : 0.10))) * subBass * 190;
-          const wave = (Math.sin(x * 0.012 + time * 0.6) * Math.cos(z * 0.010 - time * 0.45) * 0.5 + 0.5) * lowMid * 96;
-          const flow = (Math.sin((x + z) * 0.016 - time * 1.1) * 0.5 + 0.5) * mid * 74;
-          const spike = Math.sin(x * 0.037 + topoSeed) * Math.cos(z * 0.029 - topoSeed) > 0.86 ? highMid * 145 : 0;
-          const spark = Math.sin(x * 0.05 + topoSeed) * Math.cos(z * 0.043 - topoSeed) > 0.87 ? presence * 122 : 0;
-          const grain = air * 20 * (Math.sin(x * 0.09 + time * 3) * Math.cos(z * 0.08 - time * 2.4) * 0.5 + 0.5);
+          // 主驱动就是柱高本身：自己这一列的频段能量
+          // 高潮段整体再抬一点，副歌进来时地形会明显「长高」一截
+          const spectral = bandShaped * (mobile ? 164 : 150) * gain * (1 + topoClimax * 0.22);
+          // 底鼓：中间那条低频带整条窜起来，打一下窜一下
+          const swellLow = subBass * 16 * wLow;
+          // 打击的抬升近处给满、远处留三成：远处那几行已经是「过去」了，
+          // 完全跟着一起窜会像整块地形在整体呼吸，看不出是这一拍砸下来的；
+          // 一点都不给又只剩最近一行在动，整个地形看着太死。
+          const punchLow = hit * 50 * wLow * (mobile ? 1.25 : 1) * (0.3 + 0.7 * near);
+          // 镲和军鼓：外圈的柱子跟着抖
+          const punchHigh = hitHigh * 48 * wHigh * (mobile ? 1.3 : 1) * (0.3 + 0.7 * near);
+          // 深度方向留一点起伏，同一列不至于长得一模一样
+          const depth = (Math.sin(z * 0.021 + time * 0.5 + fpos * 4) * 0.5 + 0.5) * bandShaped * 16;
+          // 水波纹：只有重拍和高潮段推得出来，平时为 0，画面交给柱高去表达
           let rip = 0;
           for (let ri = 0; ri < topoRipples.length; ri += 1) {
-            const age = time - topoRipples[ri].t0;
-            const d = Math.abs(bd - age * 620);
-            if (d < 220) rip += Math.cos(d / 220 * Math.PI / 2) * topoRipples[ri].amp * 92 * Math.max(0, 1 - age / 3.2);
+            const r = topoRipples[ri];
+            const age = time - r.t0;
+            const d = Math.abs(bd - age * r.speed);
+            if (d < r.width) rip += Math.cos(d / r.width * Math.PI / 2) * r.amp * (mobile ? 88 : 76) * Math.max(0, 1 - age / 2.8);
           }
-          // 每一拍把整块地形整体顶一下，节奏看得见
-          const kick = beatPulse * 17 * Math.exp(-(bd * bd) / (maxR * maxR * (mobile ? 0.35 : 0.5)));
           // 静止时也留一层极缓的呼吸，画面不至于完全死掉
-          const idle = 7 * (Math.sin(x * 0.006 + time * 0.35) * Math.cos(z * 0.005 - time * 0.28) * 0.5 + 0.5);
-          const h = 8 + center + wave + flow + spike + spark + grain + rip + kick + idle;
-          const tt = clamp(h / 212, 0, 1);
+          const idle = 5 * (Math.sin(x * 0.006 + time * 0.35) * Math.cos(z * 0.005 - time * 0.28) * 0.5 + 0.5);
+          const h = 5 + spectral + swellLow + punchLow + punchHigh + depth + rip + idle;
+          const tt = clamp(h / 235, 0, 1);
           const c = topoLut[(tt * 255) | 0];
+          // 低频柱偏暖、高频柱偏冷，扫一眼就分得出是哪一段在响
+          const warm = (0.45 - fpos) * 24;
+          const cr = clamp(c[0] + warm, 0, 255) | 0;
+          const cg = clamp(c[1] + warm * 0.15, 0, 255) | 0;
+          const cb = clamp(c[2] - warm * 1.15, 0, 255) | 0;
 
           const t0 = proj(x - q, h, z - q);
           const t1 = proj(x + q, h, z - q);
@@ -516,7 +604,7 @@ function Universe({ current, playing, currentTime, duration, onSelect, zoom, bac
           if (x > cell * 0.5) {
             const sA = proj(x - q, 0, z + q);
             const sB = proj(x - q, h, z + q);
-            context.fillStyle = 'rgba(' + Math.round(c[0] * 0.42) + ',' + Math.round(c[1] * 0.42) + ',' + Math.round(c[2] * 0.42) + ',' + (0.06 + tt * 0.11) + ')';
+            context.fillStyle = 'rgba(' + (cr * 0.42 | 0) + ',' + (cg * 0.42 | 0) + ',' + (cb * 0.42 | 0) + ',' + (0.03 + tt * 0.3) + ')';
             context.beginPath();
             context.moveTo(f0[0], f0[1]);
             context.lineTo(sA[0], sA[1]);
@@ -527,7 +615,7 @@ function Universe({ current, playing, currentTime, duration, onSelect, zoom, bac
           } else if (x < -cell * 0.5) {
             const sC = proj(x + q, 0, z + q);
             const sD = proj(x + q, h, z + q);
-            context.fillStyle = 'rgba(' + Math.round(c[0] * 0.42) + ',' + Math.round(c[1] * 0.42) + ',' + Math.round(c[2] * 0.42) + ',' + (0.06 + tt * 0.11) + ')';
+            context.fillStyle = 'rgba(' + (cr * 0.42 | 0) + ',' + (cg * 0.42 | 0) + ',' + (cb * 0.42 | 0) + ',' + (0.03 + tt * 0.3) + ')';
             context.beginPath();
             context.moveTo(f1[0], f1[1]);
             context.lineTo(sC[0], sC[1]);
@@ -538,7 +626,7 @@ function Universe({ current, playing, currentTime, duration, onSelect, zoom, bac
           }
 
           // 正面
-          context.fillStyle = 'rgba(' + Math.round(c[0] * 0.58) + ',' + Math.round(c[1] * 0.58) + ',' + Math.round(c[2] * 0.58) + ',' + (0.14 + tt * 0.26) + ')';
+          context.fillStyle = 'rgba(' + (cr * 0.58 | 0) + ',' + (cg * 0.58 | 0) + ',' + (cb * 0.58 | 0) + ',' + (0.05 + tt * 0.42) + ')';
           context.beginPath();
           context.moveTo(f0[0], f0[1]);
           context.lineTo(f1[0], f1[1]);
@@ -548,7 +636,7 @@ function Universe({ current, playing, currentTime, duration, onSelect, zoom, bac
           context.fill();
 
           // 顶面：越高的柱子越实
-          context.fillStyle = 'rgba(' + c[0] + ',' + c[1] + ',' + c[2] + ',' + (0.30 + tt * 0.46) + ')';
+          context.fillStyle = 'rgba(' + cr + ',' + cg + ',' + cb + ',' + (0.07 + tt * 0.52) + ')';
           context.beginPath();
           context.moveTo(t0[0], t0[1]);
           context.lineTo(t1[0], t1[1]);
@@ -575,16 +663,38 @@ function Universe({ current, playing, currentTime, duration, onSelect, zoom, bac
       context.setTransform(dpr, 0, 0, dpr, 0, 0);
       context.clearRect(0, 0, width, height);
       context.fillStyle = '#fff';
-      const beatTime = timestamp * 0.001;
-      const energy = reducedMotion.matches ? 0 : audioEnergy(beatTime);
-      const beat = reducedMotion.matches ? 0 : readBeat(dtSeconds);
-      // 打击感为主、音量打底，两者叠加后归一化成 0~1 的 --beat
-      beatPulse = clamp(beat * 0.5 + energy * 0.36, 0, 1);
       const time = timestamp * 0.001;
-      const beatText = beatPulse.toFixed(3);
-      document.getElementById('lyrics-panel')?.style.setProperty('--beat', beatText);
-      if (!playerElement) playerElement = document.querySelector('.player');
-      playerElement?.style.setProperty('--beat', beatText);
+      const mobile = width < 600;
+      sampleFine();
+      let energy = 0;
+      let bassLevel = 0;
+      let trebleLevel = 0;
+      let hit = 0;
+      let hitHigh = 0;
+      if (!reducedMotion.matches) {
+        const frame = readAudio(dtSeconds, time);
+        energy = frame.energy;
+        bassLevel = frame.bass;
+        trebleLevel = frame.treble;
+        hit = frame.hit;
+        hitHigh = frame.hitHigh;
+      }
+      // 底鼓给主打击感，镲和军鼓补一层碎拍，低频量和整体音量打底。
+      // 高频只占小头：它触发得密，权重给大了画面会一直顶在半高，反而看不出重拍。
+      beatPulse = clamp(
+        (hit * 0.54 + hitHigh * 0.18 + bassLevel * 0.2 + trebleLevel * 0.08 + energy * 0.24) * (mobile ? 1.28 : 1),
+        0, 1
+      );
+      // 只在幅度真变了的时候写 CSS 变量：安卓上每帧改自定义属性会触发整棵子树重算样式
+      const quantized = Math.round(beatPulse * 100) / 100;
+      if (quantized !== lastBeatValue) {
+        lastBeatValue = quantized;
+        const beatText = quantized.toFixed(2);
+        if (!lyricsPanel) lyricsPanel = document.getElementById('lyrics-panel');
+        if (!playerElement) playerElement = document.querySelector('.player');
+        lyricsPanel?.style.setProperty('--beat', beatText);
+        playerElement?.style.setProperty('--beat', beatText);
+      }
 
       if (propsRef.current.backdropMode === 0) {
         const step = width < 600 ? 34 : 42;
@@ -613,8 +723,13 @@ function Universe({ current, playing, currentTime, duration, onSelect, zoom, bac
           }
         }
       } else if (propsRef.current.backdropMode === 3) {
-        sampleTopo(time);
-        drawTopography(width, height, reducedMotion.matches ? 0 : time);
+        sampleTopo(time, bassLevel, energy);
+        drawTopography(
+          width, height, reducedMotion.matches ? 0 : time,
+          bassLevel,
+          Math.max(trebleLevel * 0.6, hitHigh),
+          hit, hitHigh
+        );
       } else {
         const amount = width < 600 ? 150 : 280;
         for (let index = 0; index < amount; index += 1) {
@@ -809,7 +924,7 @@ function Universe({ current, playing, currentTime, duration, onSelect, zoom, bac
     <main ref={universeRef} id="universe" aria-label="拖动旋转歌单宇宙" tabIndex="0">
       <canvas ref={canvasRef} id="soundfield" aria-hidden="true" />
       <div className="ambient" /><div className="orbit-line one" /><div className="orbit-line two" />
-      <LyricsPanel track={tracks[current]} trackNumber={current + 1} currentTime={currentTime} duration={duration} playing={playing} audioRef={audioRef} />
+      <LyricsPanel track={tracks[current]} trackNumber={current + 1} currentTime={currentTime} duration={duration} playing={playing} audioRef={audioRef} analysisRef={analysisRef} />
       <div id="sphere">
         {coordinates.map(({ track }, index) => (
           <button
@@ -865,7 +980,7 @@ function Journal({ onOpen }) {
   );
 }
 
-function Player({ track, current, playing, preparing, currentTime, duration, random, repeat, liked, volume, muted, outputPref, outputs, outputMenu, onOutputToggle, onOutputPick, onPlay, onStep, onSeek, onShuffle, onRepeat, onFavorite, onVolume, onMute, onOpen }) {
+function Player({ track, current, playing, preparing, currentTime, duration, random, repeat, liked, volume, muted, outputPref, outputs, outputMenu, beatOffset, onBeatOffset, onOutputToggle, onOutputPick, onPlay, onStep, onSeek, onShuffle, onRepeat, onFavorite, onVolume, onMute, onOpen }) {
   // duration 未知（metadata 没到 / iOS 对 mp3 常报 Infinity）时进度条必须整体禁用，
   // 千万不能用 100 当 max：断点续播把 currentTime 设到 120s 的话，滑块会顶到最右边。
   const safeDuration = Number.isFinite(duration) && duration > 0 ? duration : 0;
@@ -957,6 +1072,13 @@ function Player({ track, current, playing, preparing, currentTime, duration, ran
                 </button>
               ))}
               {!outputs.length && <div className="output-empty">当前浏览器不支持列出输出设备，可在系统音量里切换默认设备</div>}
+              <div className="output-sep">律动同步校准</div>
+              <div className="beat-sync">
+                <button onClick={() => onBeatOffset(-0.02)} aria-label="画面提前 20 毫秒">−</button>
+                <strong>{beatOffset === 0 ? '默认' : `${beatOffset > 0 ? '+' : '−'}${Math.round(Math.abs(beatOffset) * 1000)}ms`}</strong>
+                <button onClick={() => onBeatOffset(0.02)} aria-label="画面延后 20 毫秒">+</button>
+              </div>
+              <div className="output-empty">画面比鼓点早就把 ＋ 点几下；画面慢半拍就点 −。蓝牙耳机通常要补 100~200ms。</div>
             </div>
           )}
         </div>
@@ -1002,11 +1124,15 @@ export default function App() {
   const toastTimer = useRef(null);
   const analysisRef = useRef({
     context: null, analyser: null, spectrum: null, source: null,
-    fine: null, fineBins: null,
-    energy: 0, beat: 0, bassRef: 0, fluxAvg: 0.02, beatGap: 0,
+    fine: null, fineBins: null, engine: null,
+    energy: 0, beat: 0, bass: 0, treble: 0, beatHigh: 0, lowLatency: false,
   });
   const [journal, setJournal] = useState(false);
-  const [current, setCurrent] = useState(0);
+  // 上次听到哪一首就接着哪一首，别每次都从头回到 01
+  const [current, setCurrent] = useState(() => {
+    const saved = readLastTrack();
+    return saved >= 0 && saved < tracks.length ? saved : 0;
+  });
   const [playing, setPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
@@ -1021,6 +1147,7 @@ export default function App() {
   const [zoom, setZoom] = useState(1);
   const [preparing, setPreparing] = useState(false);
   const [outputPref, setOutputPref] = useState(readOutputPref);
+  const [beatOffset, setBeatOffset] = useState(readBeatOffset);
   const [outputs, setOutputs] = useState([]);
   const [outputMenu, setOutputMenu] = useState(false);
   const currentRef = useRef(0);
@@ -1109,6 +1236,24 @@ export default function App() {
     return () => navigator.mediaDevices.removeEventListener('devicechange', sync);
   }, [showToast]);
 
+  // 安卓特性：切到后台（来电话、切 App、锁屏）时系统会掐掉音频渲染线程，
+  // 回到前台后 AudioContext 常常停在 suspended，表现为「进度在走、画面不动、也没声」。
+  // 这里在页面重新可见时补一次 resume。
+  useEffect(() => {
+    const wake = () => {
+      const context = analysisRef.current.context;
+      if (context && context.state !== 'running' && !audioRef.current.paused) {
+        context.resume?.().catch(() => {});
+      }
+    };
+    document.addEventListener('visibilitychange', wake);
+    window.addEventListener('focus', wake);
+    return () => {
+      document.removeEventListener('visibilitychange', wake);
+      window.removeEventListener('focus', wake);
+    };
+  }, []);
+
   const openOutputMenu = async () => {
     const nextOpen = !outputMenu;
     setOutputMenu(nextOpen);
@@ -1120,6 +1265,15 @@ export default function App() {
       devices = await listOutputs();
     }
     setOutputs(devices);
+  };
+
+  // 蓝牙耳机那段延迟 Web Audio 看不见，画面和鼓点对不上时靠这里手动补
+  const adjustBeatOffset = delta => {
+    const next = clamp(Math.round((beatOffset + delta) * 1000) / 1000, -0.3, 0.3);
+    setBeatOffset(next);
+    saveBeatOffset(next);
+    analysisRef.current.engine?.setManualOffset(next);
+    showToast(next === 0 ? '律动同步已复位' : `画面${next > 0 ? '延后' : '提前'} ${Math.round(Math.abs(next) * 1000)} 毫秒`);
   };
 
   const chooseOutput = async patch => {
@@ -1172,7 +1326,7 @@ export default function App() {
         //   interactive —— 约 128 帧的小缓冲，延迟最低。
         // 所以：手机上没明确指定外接设备时一律用小缓冲保低延迟；
         //       桌面或用户挑了外接设备时再用大缓冲换稳定（外接设备更容易 underrun）。
-        const lowLatency = window.innerWidth < 600 && !outputPrefRef.current.deviceId;
+        const lowLatency = isHandheld() && !outputPrefRef.current.deviceId;
         try {
           analysis.context = new AudioEngine({ latencyHint: lowLatency ? 'interactive' : 'playback' });
         } catch {
@@ -1188,25 +1342,39 @@ export default function App() {
         analysis.source = analysis.context.createMediaElementSource(audio);
         analysis.source.connect(analysis.analyser);
         analysis.analyser.connect(analysis.context.destination);
-        // 地形背景需要更细的频谱：单独挂一个高分辨率 analyser，节拍检测也走它
+        // 地形背景需要更细的频谱：单独挂一个高分辨率 analyser。
+        // 注意它不再承担节拍检测 —— 检测走 BeatEngine，两条链互不影响。
         analysis.fine = analysis.context.createAnalyser();
         analysis.fine.fftSize = 1024;
-        analysis.fine.smoothingTimeConstant = smooth + 0.05;
+        analysis.fine.smoothingTimeConstant = lowLatency ? 0.3 : 0.55;
         analysis.fineBins = new Uint8Array(analysis.fine.frequencyBinCount);
         analysis.source.connect(analysis.fine);
         // 记下是不是低延迟档，后面能量爬升和节拍判定的快慢都按它分档
         analysis.lowLatency = lowLatency;
+        // 节拍 / 低频检测引擎：优先 AudioWorklet（音频线程逐块算），不支持时退回 AnalyserNode
+        analysis.engine = new BeatEngine(analysis.context, analysis.source, { lowLatency });
+        analysis.engine.setManualOffset(readBeatOffset());
+        // 开发期调试把手：方便在真机上确认检测链走的是 worklet 还是兜底、延迟补了多少
+        if (import.meta.env.DEV) window.__orbitBeat = analysis.engine;
         // 只有在菜单里明确挑了设备才去改输出口，否则一律不碰，
         // 免得每次开播都把外接音箱/蓝牙的链路重新协商一遍。
         if (outputPrefRef.current.deviceId) applySink(audio, analysis.context, outputPrefRef.current.deviceId);
+        // 不阻塞播放：addModule 一般几毫秒就回来，万一卡住也先让声音出去，
+        // 引擎初始化完成后会自己在下一帧接管。
+        await Promise.race([
+          analysis.engine.start(),
+          new Promise(resolve => setTimeout(resolve, 400))
+        ]);
       } catch {
         // 部分移动端内核（老 WebView / WeChat X5）createMediaElementSource 会抛异常，
         // 之前这里直接把 startPlayback 一起 catch 掉了，表现是根本不出声。
         // 现在兜底：标记失败并退回原生输出，律动没了但声音必须正常。
+        analysis.engine?.dispose();
         analysis.context = null;
         analysis.analyser = null;
         analysis.source = null;
         analysis.fine = null;
+        analysis.engine = null;
         analysis.takeoverFailed = true;
         setOutputPref(previous => (previous.mode === 'direct' ? previous : { ...previous, mode: 'direct' }));
         showToast('当前浏览器不支持律动接管，已用原生输出播放');
@@ -1231,8 +1399,11 @@ export default function App() {
       await waitUntilPlayable(audioRef.current, 8000);
       // 等待期间用户又点了暂停，就别再自作主张地播出来
       if (!cancelPlayRef.current) await audioRef.current.play();
-    } catch {
-      showToast('本地音源暂时无法播放');
+    } catch (error) {
+      // 安卓 Chrome 在等待音源期间可能丢掉用户激活态，play() 直接被拒。
+      // 这时别静默失败，让用户再点一下播放键就行。
+      if (error?.name === 'NotAllowedError') showToast('浏览器拦下了自动播放，请再点一次播放');
+      else showToast('本地音源暂时无法播放');
     } finally {
       clearTimeout(slowHintTimer.current);
       preparingRef.current = false;
@@ -1246,6 +1417,7 @@ export default function App() {
     if (next !== current || audio.currentSrc !== new URL(tracks[next].src, location.href).href) {
       setCurrent(next);
       currentRef.current = next;
+      saveLastTrack(next);
       setCurrentTime(0);
       setDuration(0);
       audio.src = tracks[next].src;
@@ -1301,6 +1473,8 @@ export default function App() {
         outputPref={outputPref}
         outputs={outputs}
         outputMenu={outputMenu}
+        beatOffset={beatOffset}
+        onBeatOffset={adjustBeatOffset}
         onOutputToggle={openOutputMenu}
         onOutputPick={chooseOutput}
         onPlay={() => {

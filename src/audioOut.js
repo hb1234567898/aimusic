@@ -34,6 +34,29 @@ export function saveOutputPref(pref) {
   } catch { /* 隐私模式下写不了就算了，不影响本次会话 */ }
 }
 
+// ——— 律动同步校准 ———
+// Web Audio 只知道自己的输出缓冲有多长，蓝牙 A2DP 那 150~300ms 它完全看不见。
+// 剩下的偏差只能让用户自己拧：正数 = 画面再晚一点（视觉比声音早时往 + 调）。
+const BEAT_OFFSET_KEY = 'aimusic.beatOffset';
+const BEAT_OFFSET_LIMIT = 0.3;
+
+export function readBeatOffset() {
+  try {
+    const value = Number(JSON.parse(localStorage.getItem(BEAT_OFFSET_KEY)));
+    return Number.isFinite(value) ? Math.max(-BEAT_OFFSET_LIMIT, Math.min(BEAT_OFFSET_LIMIT, value)) : 0;
+  } catch {
+    return 0;
+  }
+}
+
+export function saveBeatOffset(seconds) {
+  try {
+    localStorage.setItem(BEAT_OFFSET_KEY, JSON.stringify(Math.round(seconds * 1000) / 1000));
+  } catch { /* 隐私模式写不了就算了，本次会话仍生效 */ }
+}
+
+export const BEAT_OFFSET_STEP = 0.02;
+
 // Chrome 拿到设备名必须先授权一次麦克风；授权完立刻把 track 停掉，不真的录音
 export async function requestDeviceLabels() {
   if (!navigator.mediaDevices?.getUserMedia) return false;
@@ -87,6 +110,27 @@ export function saveProgress(trackId, time) {
     all[trackId] = Math.round(time * 10) / 10;
     localStorage.setItem(PROGRESS_KEY, JSON.stringify(all));
   } catch { /* 隐私模式写不了，忽略 */ }
+}
+
+// ——— 上次听到哪一首 ———
+// 原来只按曲目记播放位置，却没记「最后听的是哪一首」，
+// 于是刷新后永远回到 01，续播等于白做。这里补上曲目本身。
+const LAST_TRACK_KEY = 'aimusic.lastTrack';
+
+export function readLastTrack() {
+  try {
+    const value = Number(JSON.parse(localStorage.getItem(LAST_TRACK_KEY)));
+    return Number.isInteger(value) && value >= 0 ? value : 0;
+  } catch {
+    return 0;
+  }
+}
+
+export function saveLastTrack(index) {
+  if (!Number.isInteger(index) || index < 0) return;
+  try {
+    localStorage.setItem(LAST_TRACK_KEY, JSON.stringify(index));
+  } catch { /* 隐私模式写不了就算了 */ }
 }
 
 // 返回应当恢复到第几秒；不到续播门槛就返回 0
