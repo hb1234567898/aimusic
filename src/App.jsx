@@ -312,8 +312,11 @@ function Universe({ current, playing, currentTime, duration, onSelect, zoom, bac
         // 原生输出模式拿不到频谱，用一段缓慢的假呼吸顶上，画面不至于彻底死掉
         target = 0.2 + Math.sin(time * 1.1) * 0.07 + Math.sin(time * 0.37) * 0.05;
       }
-      // 快起慢落：鼓点一上来就顶上去，收得慢一些
-      analysis.energy += (target - analysis.energy) * (target > analysis.energy ? 0.45 : 0.07);
+      // 快起慢落：鼓点一上来就顶上去，收得慢一些。
+      // 上升系数就是「打击感迟到多久」——0.45 约 3 帧才到位，手机 30fps 下就是 100ms，
+      // 低延迟档提到 0.75，一帧就基本顶满。
+      const attack = analysis.lowLatency ? 0.75 : 0.45;
+      analysis.energy += (target - analysis.energy) * (target > analysis.energy ? attack : 0.07);
       return analysis.energy;
     };
 
@@ -330,16 +333,19 @@ function Universe({ current, playing, currentTime, duration, onSelect, zoom, bac
         for (let index = 1; index <= end; index += 1) total += analysis.fineBins[index];
         bass = total / end / 255;
       }
-      // 与一条慢速参考线比较，只看「增量」，低频持续响也不会一直判定成节拍
+      // 与一条慢速参考线比较，只看「增量」，低频持续响也不会一直判定成节拍。
+      // 参考线追得越快，onset 越尖锐（但也越容易被持续低音反复触发），低延迟档调快。
       const flux = Math.max(0, bass - analysis.bassRef);
-      analysis.bassRef += (bass - analysis.bassRef) * 0.3;
+      const refRate = analysis.lowLatency ? 0.5 : 0.3;
+      analysis.bassRef += (bass - analysis.bassRef) * refRate;
       analysis.fluxAvg += (flux - analysis.fluxAvg) * Math.min(1, dt * 0.7);
       analysis.beatGap = Math.max(0, analysis.beatGap - dt);
       const threshold = Math.max(0.006, analysis.fluxAvg * 1.45 + 0.008);
       let hit = 0;
       if (playing && flux > threshold && analysis.beatGap <= 0) {
         hit = 0.6 + clamp((flux - threshold) / 0.05, 0, 1) * 0.4;
-        analysis.beatGap = 0.1;
+        // 冷却期间不再判定下一拍。100ms 在密集鼓点里会漏拍，低延迟档收到 70ms。
+        analysis.beatGap = analysis.lowLatency ? 0.07 : 0.1;
       }
       analysis.beat = Math.max(analysis.beat * Math.pow(0.05, dt / 0.32), hit);
       return analysis.beat;
@@ -420,7 +426,9 @@ function Universe({ current, playing, currentTime, duration, onSelect, zoom, bac
 
     const drawTopography = (width, height, time) => {
       const mobile = width < 600;
-      const grid = mobile ? 20 : 28;
+      // 格子数是移动端渲染开销的大头（grid² 个四边形）。降到 17 约少三成绘制量，
+      // 帧率上去了，节拍采样才跟得上，律动才不会显得拖。
+      const grid = mobile ? 17 : 28;
       const cell = mobile ? 40 : 46;
       const q = cell * 0.29;
       const half = (grid - 1) / 2;
@@ -555,7 +563,9 @@ function Universe({ current, playing, currentTime, duration, onSelect, zoom, bac
     const drawSoundfield = (timestamp, dtSeconds) => {
       const width = universe.clientWidth;
       const height = universe.clientHeight;
-      const dpr = Math.min(devicePixelRatio || 1, 1.5);
+      // 手机 GPU 扛不住 1.5 倍像素，掉到 20~30fps 时每帧间隔变大，
+      // 节拍采样变稀、画面看着就「慢半拍」。移动端把像素量压下来换帧率。
+      const dpr = Math.min(devicePixelRatio || 1, width < 600 ? 1.25 : 1.5);
       const pixelWidth = Math.round(width * dpr);
       const pixelHeight = Math.round(height * dpr);
       if (canvas.width !== pixelWidth || canvas.height !== pixelHeight) {
@@ -1156,16 +1166,24 @@ export default function App() {
     if (!AudioEngine || analysis.takeoverFailed) return;
     if (!analysis.context) {
       try {
-        // latencyHint 默认是 interactive（约 128 帧的小缓冲），蓝牙和 USB 声卡上
-        // 很容易 buffer underrun，表现就是声音断续、咔哒声。playback 用大缓冲，稳得多。
+        // latencyHint 决定输出缓冲大小，直接决定「听到的声音」和「画面」差多少：
+        //   playback    —— 大缓冲（桌面可达 0.5~1s）。抗 buffer underrun，外接音箱/蓝牙不断续，
+        //                  但代价是画面明显快过声音，手机上体感就是律动对不上。
+        //   interactive —— 约 128 帧的小缓冲，延迟最低。
+        // 所以：手机上没明确指定外接设备时一律用小缓冲保低延迟；
+        //       桌面或用户挑了外接设备时再用大缓冲换稳定（外接设备更容易 underrun）。
+        const lowLatency = window.innerWidth < 600 && !outputPrefRef.current.deviceId;
         try {
-          analysis.context = new AudioEngine({ latencyHint: 'playback' });
+          analysis.context = new AudioEngine({ latencyHint: lowLatency ? 'interactive' : 'playback' });
         } catch {
           analysis.context = new AudioEngine();
         }
+        // 平滑系数是频谱滞后的第二大来源：analyser 会拿历史帧做指数平均，
+        // 0.6 在 60fps 下等效约 40ms、手机掉到 30fps 时翻倍到近 100ms。移动端压到 0.2 出头。
+        const smooth = lowLatency ? 0.2 : 0.5;
         analysis.analyser = analysis.context.createAnalyser();
         analysis.analyser.fftSize = 128;
-        analysis.analyser.smoothingTimeConstant = 0.6;
+        analysis.analyser.smoothingTimeConstant = smooth;
         analysis.spectrum = new Uint8Array(analysis.analyser.frequencyBinCount);
         analysis.source = analysis.context.createMediaElementSource(audio);
         analysis.source.connect(analysis.analyser);
@@ -1173,9 +1191,11 @@ export default function App() {
         // 地形背景需要更细的频谱：单独挂一个高分辨率 analyser，节拍检测也走它
         analysis.fine = analysis.context.createAnalyser();
         analysis.fine.fftSize = 1024;
-        analysis.fine.smoothingTimeConstant = 0.55;
+        analysis.fine.smoothingTimeConstant = smooth + 0.05;
         analysis.fineBins = new Uint8Array(analysis.fine.frequencyBinCount);
         analysis.source.connect(analysis.fine);
+        // 记下是不是低延迟档，后面能量爬升和节拍判定的快慢都按它分档
+        analysis.lowLatency = lowLatency;
         // 只有在菜单里明确挑了设备才去改输出口，否则一律不碰，
         // 免得每次开播都把外接音箱/蓝牙的链路重新协商一遍。
         if (outputPrefRef.current.deviceId) applySink(audio, analysis.context, outputPrefRef.current.deviceId);
