@@ -1,8 +1,45 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { tracks } from './tracks.js';
+import { ensureLrc, prefetchLrc, waitForLrc } from './lyrics.js';
+import { OUTPUT_MODES, applySink, listOutputs, readOutputPref, requestDeviceLabels, resumeAt, saveOutputPref, saveProgress } from './audioOut.js';
 
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 const backdropNames = ['星尘点阵', '声波轨道', '呼吸星云', '律动地形'];
+
+// 音源是否已经有足够数据连续播放（HAVE_FUTURE_DATA 及以上）
+function waitUntilPlayable(audio, timeout = 8000) {
+  if (!audio || audio.readyState >= 3) return Promise.resolve();
+  return new Promise(resolve => {
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      audio.removeEventListener('canplay', finish);
+      audio.removeEventListener('canplaythrough', finish);
+      audio.removeEventListener('loadedmetadata', check);
+      audio.removeEventListener('error', finish);
+      resolve();
+    };
+    const check = () => { if (audio.readyState >= 3) finish(); };
+    const timer = setTimeout(finish, timeout);
+    audio.addEventListener('canplay', finish);
+    audio.addEventListener('canplaythrough', finish);
+    audio.addEventListener('loadedmetadata', check);
+    audio.addEventListener('error', finish);
+  });
+}
+
+// 提前把下一首的音频拉进浏览器缓存，切歌时不用从头下
+const audioPrefetch = new Map();
+function prefetchAudio(src) {
+  if (!src || audioPrefetch.has(src)) return;
+  const probe = new Audio();
+  probe.preload = 'auto';
+  probe.src = src;
+  probe.load();
+  audioPrefetch.set(src, probe);
+}
 
 function formatTime(seconds) {
   if (!Number.isFinite(seconds)) return '0:00';
@@ -18,8 +55,10 @@ function SvgDefs() {
         <symbol id="i-next" viewBox="0 0 24 24"><path d="m5 5 10 7-10 7Z" fill="currentColor" stroke="none" /><path d="M18 5v14" strokeWidth="2" /></symbol>
         <symbol id="i-vol" viewBox="0 0 24 24"><path d="m11 5-5 4H3v6h3l5 4Z" /><path d="M15 8q5 4 0 8m3-11q8 7 0 14" /></symbol>
         <symbol id="i-heart" viewBox="0 0 24 24"><path d="M20.5 5.5C17 2 12 6 12 6S7 2 3.5 5.5C-1 10 12 20 12 20S25 10 20.5 5.5Z" /></symbol>
+        <symbol id="i-speaker" viewBox="0 0 24 24"><path d="M4 9h4l4-3v12l-4-3H4Z" fill="currentColor" stroke="none" /><path d="M15.5 8.5a5 5 0 0 1 0 7M18.5 6a9 9 0 0 1 0 12" /></symbol>
         <symbol id="i-orbit" viewBox="0 0 40 40"><ellipse cx="20" cy="20" rx="18" ry="8" transform="rotate(-35 20 20)" /><circle cx="20" cy="20" r="5" fill="currentColor" stroke="none" /></symbol>
         <symbol id="i-shuffle" viewBox="0 0 24 24"><path d="M3 6h3c5 0 7 12 12 12h3m-4-4 4 4-4 4M3 18h3c2 0 4-3 5-5m3-4c1-2 2-3 4-3h3m-4-4 4 4-4 4" /></symbol>
+        <symbol id="i-wait" viewBox="0 0 24 24"><path d="M12 3a9 9 0 1 0 9 9" /></symbol>
       </defs>
     </svg>
   );
@@ -53,20 +92,6 @@ function Header({ journal, onChangeView }) {
   );
 }
 
-function isLyricLine(text) {
-  if (!/[\p{L}\p{N}]/u.test(text)) return false;
-  return !/^(作词|作詞|作曲|编曲|編曲|制作人|製作人|监制|監製|混音|录音|錄音|吉他|贝斯|貝斯|和声|和聲|母带|母帶|原唱|翻唱|原曲|二创|二創|中文翻译|中文翻譯|制作|製作|词|詞|曲)\s*[:：\-]/i.test(text);
-}
-
-function parseSyncedLyrics(value) {
-  return (value || '').split(/\r?\n/).flatMap(line => {
-    const match = line.match(/^\[(\d{1,3}):(\d{2})(?:[.:](\d{1,3}))?\]\s*(.+)$/);
-    if (!match) return [];
-    const fraction = match[3] ? Number(`0.${match[3]}`) : 0;
-    return [{ time: Number(match[1]) * 60 + Number(match[2]) + fraction, text: match[4].trim() }];
-  }).filter(row => row.text && isLyricLine(row.text));
-}
-
 function useMobile() {
   const [mobile, setMobile] = useState(() => window.innerWidth < 600);
   useEffect(() => {
@@ -83,30 +108,25 @@ function LyricsPanel({ track, trackNumber, currentTime, duration, playing, audio
   const mobile = useMobile();
 
   useEffect(() => {
-    const controller = new AbortController();
+    let alive = true;
     setRows([{ time: 0, text: '正在载入本地同步歌词…' }]);
     setState('loading');
-    fetch(track.lyrics, { cache: 'no-store', signal: controller.signal })
-      .then(response => {
-        if (!response.ok) throw new Error(`Local lyrics ${response.status}`);
-        return response.text();
-      })
-      .then(value => {
-        const parsed = parseSyncedLyrics(value);
-        if (parsed.length) {
-          setRows(parsed);
-          setState('local');
-        } else {
-          setRows([{ time: 0, text: '当前歌词文件没有可读取的时间轴' }]);
-          setState('missing');
-        }
-      })
-      .catch(error => {
-        if (error.name === 'AbortError') return;
-        setRows([{ time: 0, text: '本地歌词暂时无法读取' }]);
-        setState('error');
-      });
-    return () => controller.abort();
+    // 复用 App 里的加载结果：播放前已经等过一次，这里通常是命中缓存
+    ensureLrc(track.lyrics).then(parsed => {
+      if (!alive || !parsed) return;
+      if (parsed.rows.length) {
+        setRows(parsed.rows);
+        setState('local');
+      } else {
+        setRows([{ time: 0, text: '当前歌词文件没有可读取的时间轴' }]);
+        setState('missing');
+      }
+    }).catch(() => {
+      if (!alive) return;
+      setRows([{ time: 0, text: '本地歌词暂时无法读取' }]);
+      setState('error');
+    });
+    return () => { alive = false; };
   }, [track]);
 
   const fallbackIndex = useMemo(() => {
@@ -142,17 +162,49 @@ function LyricsPanel({ track, trackNumber, currentTime, duration, playing, audio
 
   const activeIndex = liveIndex !== null && liveIndex < rows.length ? liveIndex : fallbackIndex;
 
-  const rowHeight = mobile ? 44 : 56;
-  const centerOffset = mobile ? 51 : 63;
+  // 歌词允许折行，每行高度不再统一，滚动量必须按实际位置量出来，
+  // 否则长句换行后整条轨道会对不上。
+  const headRef = useRef(null);
+  const trackRef = useRef(null);
+  const rowRefs = useRef([]);
+  const [shift, setShift] = useState(0);
+  useLayoutEffect(() => {
+    const measure = () => {
+      const target = rowRefs.current[activeIndex] || rowRefs.current[0] || headRef.current;
+      if (!target) return;
+      const viewport = trackRef.current?.parentElement;
+      if (!viewport) return;
+      const center = viewport.clientHeight / 2;
+      setShift(center - (target.offsetTop + target.offsetHeight / 2));
+    };
+    measure();
+    // 字体替换、窗口变化、换行重排都会改高度，监听到就重新量一次
+    const observer = new ResizeObserver(measure);
+    if (trackRef.current) observer.observe(trackRef.current);
+    window.addEventListener('resize', measure);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener('resize', measure);
+    };
+  }, [activeIndex, rows, mobile]);
+
   const source = state === 'local' ? '本地同步歌词' : state === 'loading' ? '正在载入本地歌词' : state === 'missing' ? '歌词文件没有时间轴' : '本地歌词暂时无法读取';
 
   return (
     <div className={`intro ${playing ? 'is-playing' : ''}`} id="lyrics-panel" aria-live="polite">
       <span className="eyebrow">{playing ? 'NOW PLAYING' : 'READY TO PLAY'} · TRACK {String(trackNumber).padStart(2, '0')}</span>
       <div className="lyrics-viewport">
-        <div className="lyrics-track" style={{ transform: `translate3d(0,${centerOffset - activeIndex * rowHeight}px,0)` }}>
+        <div className="lyrics-track" ref={trackRef} style={{ transform: `translate3d(0,${shift}px,0)` }}>
+          {/* 歌名也排在轨道里，跟着歌词往回滚，不钉在面板顶部 */}
+          <div className="lyrics-head" ref={headRef}>
+            <h1 className="lyrics-title">{track.title}</h1>
+          </div>
           {rows.map((row, index) => (
-            <div className={`lyric-row ${index === activeIndex ? 'active' : ''} ${Math.abs(index - activeIndex) === 1 ? 'near' : ''}`} key={`${row.time}-${index}`}>
+            <div
+              className={`lyric-row ${row.meta ? 'meta' : ''} ${index === activeIndex ? 'active' : ''} ${Math.abs(index - activeIndex) === 1 ? 'near' : ''}`}
+              key={`${row.time}-${index}`}
+              ref={element => { rowRefs.current[index] = element; }}
+            >
               {row.text}
             </div>
           ))}
@@ -229,18 +281,59 @@ function Universe({ current, playing, currentTime, duration, onSelect, zoom, bac
       focusing = true;
     };
 
-    const audioEnergy = () => {
+    let beatPulse = 0;
+    let playerElement = null;
+
+    const audioEnergy = (time = 0) => {
       const analysis = analysisRef.current;
       let target = 0;
       if (analysis.analyser && propsRef.current.playing) {
         analysis.analyser.getByteFrequencyData(analysis.spectrum);
         const usefulBins = Math.min(24, analysis.spectrum.length);
         let total = 0;
-        for (let index = 0; index < usefulBins; index += 1) total += analysis.spectrum[index] * (1 - index / usefulBins * 0.35);
-        target = total / usefulBins / 255;
+        let weight = 0;
+        for (let index = 0; index < usefulBins; index += 1) {
+          const w = 1 - index / usefulBins * 0.55;
+          total += analysis.spectrum[index] * w;
+          weight += w;
+        }
+        // 平均出来的能量常年趴在 0.2 上下，抬一点增益画面才动得起来
+        target = clamp(Math.pow(total / weight / 255 * 1.55, 0.85), 0, 1);
+      } else if (propsRef.current.playing) {
+        // 原生输出模式拿不到频谱，用一段缓慢的假呼吸顶上，画面不至于彻底死掉
+        target = 0.2 + Math.sin(time * 1.1) * 0.07 + Math.sin(time * 0.37) * 0.05;
       }
-      analysis.energy += (target - analysis.energy) * (target > analysis.energy ? 0.3 : 0.075);
+      // 快起慢落：鼓点一上来就顶上去，收得慢一些
+      analysis.energy += (target - analysis.energy) * (target > analysis.energy ? 0.45 : 0.07);
       return analysis.energy;
+    };
+
+    // 低频 onset 检测：低频能量突然冲起来就是一拍，给出一个 0~1 的打击值后快速衰减
+    const readBeat = dt => {
+      const analysis = analysisRef.current;
+      const playing = propsRef.current.playing;
+      let bass = 0;
+      if (analysis.fine && playing) {
+        analysis.fine.getByteFrequencyData(analysis.fineBins);
+        const nyquist = (analysis.context?.sampleRate || 44100) / 2;
+        const end = clamp(Math.round(150 / nyquist * analysis.fineBins.length), 3, analysis.fineBins.length - 1);
+        let total = 0;
+        for (let index = 1; index <= end; index += 1) total += analysis.fineBins[index];
+        bass = total / end / 255;
+      }
+      // 与一条慢速参考线比较，只看「增量」，低频持续响也不会一直判定成节拍
+      const flux = Math.max(0, bass - analysis.bassRef);
+      analysis.bassRef += (bass - analysis.bassRef) * 0.3;
+      analysis.fluxAvg += (flux - analysis.fluxAvg) * Math.min(1, dt * 0.7);
+      analysis.beatGap = Math.max(0, analysis.beatGap - dt);
+      const threshold = Math.max(0.006, analysis.fluxAvg * 1.45 + 0.008);
+      let hit = 0;
+      if (playing && flux > threshold && analysis.beatGap <= 0) {
+        hit = 0.6 + clamp((flux - threshold) / 0.05, 0, 1) * 0.4;
+        analysis.beatGap = 0.1;
+      }
+      analysis.beat = Math.max(analysis.beat * Math.pow(0.05, dt / 0.32), hit);
+      return analysis.beat;
     };
 
     const dot = (x, y, radius, alpha) => {
@@ -295,8 +388,9 @@ function Universe({ current, playing, currentTime, duration, onSelect, zoom, bac
           const hi = Math.max(lo + 1, Math.floor(Math.pow((i + 1) / TOPO_BANDS, 1.7) * usable));
           let sum = 0;
           for (let k = lo; k < hi; k += 1) sum += bins[k];
-          const value = sum / (hi - lo) / 255;
-          topoBands[i] += (value - topoBands[i]) * (value > topoBands[i] ? 0.4 : 0.12);
+          // 频谱平均值偏小，统一抬增益，柱子才顶得起来
+          const value = clamp(sum / (hi - lo) / 255 * 1.25, 0, 1);
+          topoBands[i] += (value - topoBands[i]) * (value > topoBands[i] ? 0.5 : 0.1);
         }
         for (let i = 0; i < 4; i += 1) bass += topoBands[i];
         bass /= 4;
@@ -304,8 +398,10 @@ function Universe({ current, playing, currentTime, duration, onSelect, zoom, bac
         // 没在播放时缓慢回落，最后只剩一层静态的矮格子
         for (let i = 0; i < TOPO_BANDS; i += 1) topoBands[i] += (0 - topoBands[i]) * 0.04;
       }
-      if (bass - topoBeatMark > 0.18) {
-        topoRipples.push({ t0: time, amp: bass });
+      const lastRipple = topoRipples[topoRipples.length - 1];
+      const canRipple = !lastRipple || time - lastRipple.t0 > 0.2;
+      if (canRipple && (bass - topoBeatMark > 0.16 || beatPulse > 0.92)) {
+        topoRipples.push({ t0: time, amp: Math.max(bass, 0.6) });
         topoBeatMark = bass;
       }
       if (bass < topoBeatMark) topoBeatMark = bass * 0.92;
@@ -365,21 +461,23 @@ function Universe({ current, playing, currentTime, duration, onSelect, zoom, bac
         for (let col = 0; col < grid; col += 1) {
           const x = (col - half) * cell;
           const dist = Math.sqrt(x * x + z * z);
-          const center = Math.exp(-(dist * dist) / (maxR * maxR * 0.10)) * subBass * 185;
+          const center = Math.exp(-(dist * dist) / (maxR * maxR * 0.10)) * subBass * 190;
           const wave = (Math.sin(x * 0.012 + time * 0.6) * Math.cos(z * 0.010 - time * 0.45) * 0.5 + 0.5) * lowMid * 96;
           const flow = (Math.sin((x + z) * 0.016 - time * 1.1) * 0.5 + 0.5) * mid * 74;
           const spike = Math.sin(x * 0.037 + topoSeed) * Math.cos(z * 0.029 - topoSeed) > 0.86 ? highMid * 145 : 0;
           const spark = Math.sin(x * 0.05 + topoSeed) * Math.cos(z * 0.043 - topoSeed) > 0.87 ? presence * 122 : 0;
-          const grain = air * 26 * (Math.sin(x * 0.09 + time * 3) * Math.cos(z * 0.08 - time * 2.4) * 0.5 + 0.5);
+          const grain = air * 20 * (Math.sin(x * 0.09 + time * 3) * Math.cos(z * 0.08 - time * 2.4) * 0.5 + 0.5);
           let rip = 0;
           for (let ri = 0; ri < topoRipples.length; ri += 1) {
             const age = time - topoRipples[ri].t0;
             const d = Math.abs(dist - age * 620);
             if (d < 220) rip += Math.cos(d / 220 * Math.PI / 2) * topoRipples[ri].amp * 92 * Math.max(0, 1 - age / 3.2);
           }
+          // 每一拍把整块地形整体顶一下，节奏看得见
+          const kick = beatPulse * 17 * Math.exp(-(dist * dist) / (maxR * maxR * 0.5));
           // 静止时也留一层极缓的呼吸，画面不至于完全死掉
-          const idle = 6 * (Math.sin(x * 0.006 + time * 0.35) * Math.cos(z * 0.005 - time * 0.28) * 0.5 + 0.5);
-          const h = 8 + center + wave + flow + spike + spark + grain + rip + idle;
+          const idle = 7 * (Math.sin(x * 0.006 + time * 0.35) * Math.cos(z * 0.005 - time * 0.28) * 0.5 + 0.5);
+          const h = 8 + center + wave + flow + spike + spark + grain + rip + kick + idle;
           const tt = clamp(h / 212, 0, 1);
           const c = topoLut[(tt * 255) | 0];
 
@@ -438,7 +536,7 @@ function Universe({ current, playing, currentTime, duration, onSelect, zoom, bac
       }
     };
 
-    const drawSoundfield = timestamp => {
+    const drawSoundfield = (timestamp, dtSeconds) => {
       const width = universe.clientWidth;
       const height = universe.clientHeight;
       const dpr = Math.min(devicePixelRatio || 1, 1.5);
@@ -451,9 +549,16 @@ function Universe({ current, playing, currentTime, duration, onSelect, zoom, bac
       context.setTransform(dpr, 0, 0, dpr, 0, 0);
       context.clearRect(0, 0, width, height);
       context.fillStyle = '#fff';
-      const energy = reducedMotion.matches ? 0 : audioEnergy();
+      const beatTime = timestamp * 0.001;
+      const energy = reducedMotion.matches ? 0 : audioEnergy(beatTime);
+      const beat = reducedMotion.matches ? 0 : readBeat(dtSeconds);
+      // 打击感为主、音量打底，两者叠加后归一化成 0~1 的 --beat
+      beatPulse = clamp(beat * 0.5 + energy * 0.36, 0, 1);
       const time = timestamp * 0.001;
-      document.getElementById('lyrics-panel')?.style.setProperty('--beat', energy.toFixed(3));
+      const beatText = beatPulse.toFixed(3);
+      document.getElementById('lyrics-panel')?.style.setProperty('--beat', beatText);
+      if (!playerElement) playerElement = document.querySelector('.player');
+      playerElement?.style.setProperty('--beat', beatText);
 
       if (propsRef.current.backdropMode === 0) {
         const step = width < 600 ? 34 : 42;
@@ -465,7 +570,7 @@ function Universe({ current, playing, currentTime, duration, onSelect, zoom, bac
             const distance = Math.hypot(x - centerX, y - centerY);
             const falloff = Math.max(0, 1 - distance / maxDistance);
             const wave = Math.sin(distance * 0.04 - time * 3.2) * 0.5 + 0.5;
-            dot(x, y, 0.42 + wave * 0.32 + energy * falloff * 2.4, 0.045 + falloff * 0.055 + energy * falloff * 0.24);
+            dot(x, y, 0.42 + wave * 0.32 + (energy * 2.4 + beatPulse * 1.5) * falloff, 0.045 + falloff * 0.055 + (energy * 0.24 + beatPulse * 0.2) * falloff);
           }
         }
       } else if (propsRef.current.backdropMode === 1) {
@@ -477,8 +582,8 @@ function Universe({ current, playing, currentTime, duration, onSelect, zoom, bac
           const radiusY = ring / 9 * height * 0.44;
           for (let index = 0; index < amount; index += 1) {
             const angle = index / amount * Math.PI * 2 + time * (0.012 + ring * 0.001) * (ring % 2 ? 1 : -1);
-            const lift = Math.sin(angle * 3 - time * 2.4) * energy * 12;
-            dot(centerX + Math.cos(angle) * radiusX, centerY + Math.sin(angle) * radiusY + lift, 0.45 + energy * 1.9, 0.05 + energy * 0.22);
+            const lift = Math.sin(angle * 3 - time * 2.4) * (energy * 10 + beatPulse * 6);
+            dot(centerX + Math.cos(angle) * radiusX, centerY + Math.sin(angle) * radiusY + lift, 0.45 + energy * 1.7 + beatPulse * 1.1, 0.05 + energy * 0.2 + beatPulse * 0.15);
           }
         }
       } else if (propsRef.current.backdropMode === 3) {
@@ -490,8 +595,8 @@ function Universe({ current, playing, currentTime, duration, onSelect, zoom, bac
           const seedX = ((Math.sin(index * 91.417) * 43758.5453) % 1 + 1) % 1;
           const seedY = ((Math.sin(index * 47.853 + 2) * 24634.6345) % 1 + 1) % 1;
           const shimmer = Math.sin(time * (1.1 + seedX) + index) * 0.5 + 0.5;
-          const drift = reducedMotion.matches ? 0 : Math.sin(time * 0.35 + index) * (2 + energy * 8);
-          dot(seedX * width + drift, seedY * height, 0.4 + shimmer * 0.65 + energy * 1.8, 0.035 + shimmer * 0.08 + energy * 0.16);
+          const drift = reducedMotion.matches ? 0 : Math.sin(time * 0.35 + index) * (2 + energy * 7 + beatPulse * 5);
+          dot(seedX * width + drift, seedY * height, 0.4 + shimmer * 0.65 + energy * 1.8 + beatPulse * 1.2, 0.035 + shimmer * 0.08 + energy * 0.15 + beatPulse * 0.11);
         }
       }
       context.globalAlpha = 1;
@@ -514,8 +619,16 @@ function Universe({ current, playing, currentTime, duration, onSelect, zoom, bac
         const projectedY = y * Math.cos(tilt) - z * Math.sin(tilt);
         const depth = y * Math.sin(tilt) + z * Math.cos(tilt);
         const active = card.track.id === propsRef.current.current && propsRef.current.playing;
-        const scale = (0.36 + (depth + 1) * 0.31) * (active ? 1.07 : 1);
+        // 正在播的那张卡片跟着节拍一起呼吸
+        const scale = (0.36 + (depth + 1) * 0.31) * (active ? 1.05 + beatPulse * 0.045 : 1);
         element.style.transform = `translate3d(-50%,-50%,0) translate3d(${x * radiusX}px,${projectedY * radiusY + (mobile ? 45 : 10)}px,0) scale(${scale}) rotateY(${x * -16}deg) rotateZ(${x * projectedY * 5}deg)`;
+        if (active) {
+          element.style.boxShadow = `0 12px 35px #0008, 0 0 0 2px #ffffff3d, 0 0 ${(16 + beatPulse * 34).toFixed(1)}px rgba(255,255,255,${(0.06 + beatPulse * 0.2).toFixed(3)})`;
+          element.dataset.glow = '1';
+        } else if (element.dataset.glow) {
+          element.style.boxShadow = '';
+          delete element.dataset.glow;
+        }
         // 背面卡片直接淡到不可见，避免在正面卡片后面堆成一列
         const fade = Math.max(0, Math.min(1, (depth + 0.5) / 1.5));
         element.style.opacity = String(active ? 1 : 0.05 + fade * fade * 0.85);
@@ -552,8 +665,8 @@ function Universe({ current, playing, currentTime, duration, onSelect, zoom, bac
           velocityY *= friction;
         }
       }
+      drawSoundfield(timestamp, dt / 1000);
       drawSphere();
-      drawSoundfield(timestamp);
       animationFrame = requestAnimationFrame(animate);
     };
 
@@ -629,6 +742,9 @@ function Universe({ current, playing, currentTime, duration, onSelect, zoom, bac
     animationFrame = requestAnimationFrame(animate);
     return () => {
       cancelAnimationFrame(animationFrame);
+      // 离开宇宙视图时把节拍值归零，免得停在某一帧的亮度上
+      document.getElementById('lyrics-panel')?.style.setProperty('--beat', '0');
+      playerElement?.style.setProperty('--beat', '0');
       universe.removeEventListener('pointerdown', startDrag);
       universe.removeEventListener('pointermove', moveDrag);
       universe.removeEventListener('pointerup', endDrag);
@@ -700,20 +816,29 @@ function Journal({ onOpen }) {
   );
 }
 
-function Player({ track, current, playing, currentTime, duration, random, repeat, liked, volume, muted, onPlay, onStep, onSeek, onShuffle, onRepeat, onFavorite, onVolume, onMute, onOpen }) {
+function Player({ track, current, playing, preparing, currentTime, duration, random, repeat, liked, volume, muted, outputPref, outputs, outputMenu, onOutputToggle, onOutputPick, onPlay, onStep, onSeek, onShuffle, onRepeat, onFavorite, onVolume, onMute, onOpen }) {
   const progress = duration ? currentTime / duration * 100 : 0;
   return (
     <footer className="player glass">
       <div className="now">
         <LiquidArt src={track.cover} alt={`${track.album} 专辑封面`} className="now-art" />
-        <div className="now-copy"><div className="now-title">{track.title}</div><div className="now-sub">{track.artist} · {track.album}</div></div>
+        <div className="now-copy">
+          <div className="now-title">{track.title}</div>
+          <div className={`now-sub ${preparing ? 'is-preparing' : ''}`}>{preparing ? '正在准备歌词与音源…' : `${track.artist} · ${track.album}`}</div>
+        </div>
         <button className={`icon favorite ${liked ? 'liked' : ''}`} onClick={onFavorite} aria-label={liked ? '取消收藏当前歌曲' : '收藏当前歌曲'} aria-pressed={liked}><Icon name="heart" /></button>
       </div>
       <div className="playback">
         <div className="transport">
           <button className="icon secondary" onClick={onShuffle} aria-label="随机播放" aria-pressed={random}><Icon name="shuffle" /></button>
           <button className="icon" onClick={() => onStep(-1)} aria-label="上一首"><Icon name="next" className="flip" /></button>
-          <button className="play" onClick={onPlay} aria-label={playing ? '暂停' : '播放'}><Icon name={playing ? 'pause' : 'play'} /></button>
+          <button
+            className={`play ${preparing ? 'preparing' : ''}`}
+            onClick={onPlay}
+            disabled={preparing}
+            aria-busy={preparing}
+            aria-label={preparing ? '正在准备歌词与音源' : playing ? '暂停' : '播放'}
+          ><Icon name={preparing ? 'wait' : playing ? 'pause' : 'play'} /></button>
           <button className="icon" onClick={() => onStep(1)} aria-label="下一首"><Icon name="next" /></button>
           <button className="icon secondary" onClick={onRepeat} aria-label="循环播放" aria-pressed={repeat}>↻</button>
         </div>
@@ -727,6 +852,31 @@ function Player({ track, current, playing, currentTime, duration, random, repeat
         <span>TRACK / {String(current + 1).padStart(2, '0')}</span>
         <button className="icon" onClick={onMute} aria-label={muted ? '取消静音' : '静音'} style={{ opacity: muted ? 0.4 : 1 }}><Icon name="vol" /></button>
         <input type="range" min="0" max="1" step=".01" value={volume} aria-label="音量" style={{ '--fill': `${volume * 100}%` }} onChange={event => onVolume(Number(event.target.value))} />
+        <div className="output-wrap">
+          <button className={`icon output-btn ${outputMenu ? 'on' : ''}`} onClick={onOutputToggle} aria-label="选择音频输出设备" aria-expanded={outputMenu} title="音频输出"><Icon name="speaker" /></button>
+          {outputMenu && (
+            <div className="output-menu glass" role="menu">
+              <div className="output-head">音频输出</div>
+              {Object.entries(OUTPUT_MODES).map(([mode, info]) => (
+                <button key={mode} className={`output-item ${outputPref.mode === mode ? 'on' : ''}`} role="menuitemradio" aria-checked={outputPref.mode === mode} onClick={() => onOutputPick({ mode })}>
+                  <strong>{info.label}</strong>
+                  <small>{info.hint}</small>
+                </button>
+              ))}
+              <div className="output-sep">指定输出设备（律动保持开启）</div>
+              <button className={`output-item ${!outputPref.deviceId ? 'on' : ''}`} role="menuitemradio" aria-checked={!outputPref.deviceId} onClick={() => onOutputPick({ deviceId: '' })}>
+                <strong>跟随系统默认</strong>
+                <small>接了外接音箱却很小声时，先试这个</small>
+              </button>
+              {outputs.map(device => (
+                <button key={device.id} className={`output-item ${outputPref.deviceId === device.id ? 'on' : ''}`} role="menuitemradio" aria-checked={outputPref.deviceId === device.id} onClick={() => onOutputPick({ deviceId: device.id })}>
+                  <strong>{device.label}</strong>
+                </button>
+              ))}
+              {!outputs.length && <div className="output-empty">当前浏览器不支持列出输出设备，可在系统音量里切换默认设备</div>}
+            </div>
+          )}
+        </div>
         <button className="icon note-icon" onClick={onOpen} aria-label="阅读当前歌曲手记">☷</button>
       </div>
     </footer>
@@ -767,7 +917,11 @@ function DetailDialog({ track, onClose, onPlay }) {
 export default function App() {
   const audioRef = useRef(null);
   const toastTimer = useRef(null);
-  const analysisRef = useRef({ context: null, analyser: null, spectrum: null, source: null, fine: null, fineBins: null, energy: 0 });
+  const analysisRef = useRef({
+    context: null, analyser: null, spectrum: null, source: null,
+    fine: null, fineBins: null,
+    energy: 0, beat: 0, bassRef: 0, fluxAvg: 0.02, beatGap: 0,
+  });
   const [journal, setJournal] = useState(false);
   const [current, setCurrent] = useState(0);
   const [playing, setPlaying] = useState(false);
@@ -782,6 +936,19 @@ export default function App() {
   const [toastText, setToastText] = useState('');
   const [backdropMode, setBackdropMode] = useState(3);
   const [zoom, setZoom] = useState(1);
+  const [preparing, setPreparing] = useState(false);
+  const [outputPref, setOutputPref] = useState(readOutputPref);
+  const [outputs, setOutputs] = useState([]);
+  const [outputMenu, setOutputMenu] = useState(false);
+  const currentRef = useRef(0);
+  const preparingRef = useRef(false);
+  const cancelPlayRef = useRef(false);
+  const slowHintTimer = useRef(null);
+  const outputPrefRef = useRef(outputPref);
+  outputPrefRef.current = outputPref;
+  const playingRef = useRef(false);
+  playingRef.current = playing;
+  const resumeWantedRef = useRef(0);
 
   const showToast = useCallback(message => {
     setToastText(message);
@@ -789,44 +956,176 @@ export default function App() {
     toastTimer.current = setTimeout(() => setToastText(''), 2200);
   }, []);
 
-  useEffect(() => () => clearTimeout(toastTimer.current), []);
+  useEffect(() => () => { clearTimeout(toastTimer.current); clearTimeout(slowHintTimer.current); }, []);
+  useEffect(() => { currentRef.current = current; }, [current]);
   useEffect(() => {
     const audio = audioRef.current;
     audio.src = tracks[0].src;
     audio.volume = 0.65;
     audio.load();
-  }, []);
+    // 首屏就把当前歌词和下一首准备好，点播放时基本不用再等
+    prefetchLrc(tracks[0].lyrics);
+    prefetchLrc(tracks[1 % tracks.length].lyrics);
+    // 上次选了具体输出设备的话，启动时就把它接回去（此时还没被 Web Audio 接管，元素级即可）
+    if (outputPrefRef.current.deviceId) {
+      applySink(audio, null, outputPrefRef.current.deviceId).then(ok => {
+        if (!ok) showToast('上次的输出设备不可用，已回到系统默认');
+      });
+    }
+  }, [showToast]);
+
+  // 断点续播：切歌（含首屏）时把上次听到的位置接回去，但不自动播放
+  useEffect(() => {
+    const audio = audioRef.current;
+    const id = currentRef.current;
+    let cancelled = false;
+    const apply = () => {
+      if (cancelled) return;
+      const at = resumeAt(id, Number.isFinite(audio.duration) ? audio.duration : 0);
+      if (!at) return;
+      audio.currentTime = at;
+      setCurrentTime(at);
+      resumeWantedRef.current = at;
+      showToast(`已回到上次听到 ${formatTime(at)}`);
+    };
+    if (audio.readyState >= 1) apply();
+    else audio.addEventListener('loadedmetadata', apply, { once: true });
+    return () => { cancelled = true; audio.removeEventListener('loadedmetadata', apply); };
+  }, [current, showToast]);
+
+  // 音源中断后自动重连：蓝牙/外接设备回来、文件未就绪时兜底重新拉取
+  const reconnect = useCallback(() => {
+    const audio = audioRef.current;
+    if (!playingRef.current) return;
+    const at = audio.currentTime || resumeWantedRef.current;
+    audio.src = tracks[currentRef.current].src;
+    audio.load();
+    const resume = () => {
+      audio.currentTime = at || 0;
+      audio.play().then(() => showToast(`已从 ${formatTime(audio.currentTime)} 继续播放`)).catch(() => {});
+    };
+    audio.addEventListener('canplay', resume, { once: true });
+  }, [showToast]);
+
+  // 外接设备插拔变化时：如果之前选中的设备没了（蓝牙断开），自动退回系统默认，
+  // 否则会卡在一个已经不存在的输出口上，整页都没声音。
+  useEffect(() => {
+    if (!navigator.mediaDevices?.addEventListener) return;
+    const sync = async () => {
+      const devices = await listOutputs();
+      setOutputs(devices);
+      if (!outputPrefRef.current.deviceId) return;
+      if (devices.some(item => item.id === outputPrefRef.current.deviceId)) return;
+      const next = { ...outputPrefRef.current, deviceId: '' };
+      saveOutputPref(next);
+      setOutputPref(next);
+      await applySink(audioRef.current, analysisRef.current.context, '');
+      showToast('原来的输出设备已断开，已切回系统默认');
+    };
+    navigator.mediaDevices.addEventListener('devicechange', sync);
+    return () => navigator.mediaDevices.removeEventListener('devicechange', sync);
+  }, [showToast]);
+
+  const openOutputMenu = async () => {
+    const nextOpen = !outputMenu;
+    setOutputMenu(nextOpen);
+    if (!nextOpen) return;
+    let devices = await listOutputs();
+    // Chrome 不给标签就拿不到设备名，先申请一次麦克风权限（拿完立刻停掉录音）
+    if (devices.every(item => /未命名|^\s*$/.test(item.label))) {
+      await requestDeviceLabels();
+      devices = await listOutputs();
+    }
+    setOutputs(devices);
+  };
+
+  const chooseOutput = async patch => {
+    setOutputMenu(false);
+    const next = { ...outputPref, ...patch };
+    if (next.mode === outputPref.mode && next.deviceId === outputPref.deviceId) return;
+    saveOutputPref(next);
+    const taken = Boolean(analysisRef.current.context);
+    // 音频被接管之后没法原地还原成原生路由（浏览器限制），但这里刻意不去 reload：
+    // 强制刷新会打断外接音箱和蓝牙的连接，交给用户自己决定什么时候重启页面。
+    if (next.mode !== outputPref.mode && taken) {
+      setOutputPref(next);
+      showToast(next.mode === 'direct' ? '已保存，下次打开时按原生输出播放' : '已保存，下次打开时恢复律动');
+      return;
+    }
+    setOutputPref(next);
+    if (next.mode === 'direct') {
+      showToast('已切到原生输出，律动暂停');
+      return;
+    }
+    const ok = await applySink(audioRef.current, analysisRef.current.context, next.deviceId);
+    if (!ok) {
+      const fallback = { ...next, deviceId: '' };
+      saveOutputPref(fallback);
+      setOutputPref(fallback);
+      applySink(audioRef.current, analysisRef.current.context, '');
+      showToast('这个设备切不过去，已保持系统默认');
+      return;
+    }
+    const picked = outputs.find(item => item.id === next.deviceId);
+    showToast(picked ? `输出到「${picked.label}」` : '已跟随系统默认设备');
+  };
 
   const ensureAudioAnalysis = useCallback(async () => {
     const audio = audioRef.current;
     const analysis = analysisRef.current;
+    // 原生输出模式：绝不接管音频。外接音箱/蓝牙的路由交给浏览器，音质优先。
+    if (outputPrefRef.current.mode === 'direct') return;
     const AudioEngine = window.AudioContext || window.webkitAudioContext;
     if (!AudioEngine) return;
     if (!analysis.context) {
-      analysis.context = new AudioEngine();
+      // latencyHint 默认是 interactive（约 128 帧的小缓冲），蓝牙和 USB 声卡上
+      // 很容易 buffer underrun，表现就是声音断续、咔哒声。playback 用大缓冲，稳得多。
+      try {
+        analysis.context = new AudioEngine({ latencyHint: 'playback' });
+      } catch {
+        analysis.context = new AudioEngine();
+      }
       analysis.analyser = analysis.context.createAnalyser();
       analysis.analyser.fftSize = 128;
-      analysis.analyser.smoothingTimeConstant = 0.78;
+      analysis.analyser.smoothingTimeConstant = 0.6;
       analysis.spectrum = new Uint8Array(analysis.analyser.frequencyBinCount);
       analysis.source = analysis.context.createMediaElementSource(audio);
       analysis.source.connect(analysis.analyser);
       analysis.analyser.connect(analysis.context.destination);
-      // 地形背景需要更细的频谱：单独挂一个高分辨率 analyser，不动上面的能量计算
+      // 地形背景需要更细的频谱：单独挂一个高分辨率 analyser，节拍检测也走它
       analysis.fine = analysis.context.createAnalyser();
       analysis.fine.fftSize = 1024;
-      analysis.fine.smoothingTimeConstant = 0.72;
+      analysis.fine.smoothingTimeConstant = 0.55;
       analysis.fineBins = new Uint8Array(analysis.fine.frequencyBinCount);
       analysis.source.connect(analysis.fine);
+      // 只有在菜单里明确挑了设备才去改输出口，否则一律不碰，
+      // 免得每次开播都把外接音箱/蓝牙的链路重新协商一遍。
+      if (outputPrefRef.current.deviceId) applySink(audio, analysis.context, outputPrefRef.current.deviceId);
     }
     if (analysis.context.state === 'suspended') await analysis.context.resume();
   }, []);
 
+  // 播放前先把歌词和音源都等齐：歌词最慢等 2.6s，音源最慢等 8s，
+  // 超时就直接开播，宁可歌词晚一点到，也不能卡住不出声。
   const startPlayback = useCallback(async () => {
+    if (preparingRef.current) return;
+    preparingRef.current = true;
+    cancelPlayRef.current = false;
+    setPreparing(true);
+    clearTimeout(slowHintTimer.current);
+    slowHintTimer.current = setTimeout(() => showToast('正在准备歌词与音源…'), 700);
     try {
       await ensureAudioAnalysis();
-      await audioRef.current.play();
+      await waitForLrc(tracks[currentRef.current].lyrics, 2600);
+      await waitUntilPlayable(audioRef.current, 8000);
+      // 等待期间用户又点了暂停，就别再自作主张地播出来
+      if (!cancelPlayRef.current) await audioRef.current.play();
     } catch {
       showToast('本地音源暂时无法播放');
+    } finally {
+      clearTimeout(slowHintTimer.current);
+      preparingRef.current = false;
+      setPreparing(false);
     }
   }, [ensureAudioAnalysis, showToast]);
 
@@ -835,11 +1134,14 @@ export default function App() {
     const audio = audioRef.current;
     if (next !== current || audio.currentSrc !== new URL(tracks[next].src, location.href).href) {
       setCurrent(next);
+      currentRef.current = next;
       setCurrentTime(0);
       setDuration(0);
       audio.src = tracks[next].src;
       audio.load();
     }
+    // 选歌的那一刻就开始拉歌词，真正点播放时通常已经就绪
+    prefetchLrc(tracks[next].lyrics);
     if (shouldPlay) startPlayback();
   }, [current, startPlayback]);
 
@@ -877,6 +1179,7 @@ export default function App() {
         track={track}
         current={current}
         playing={playing}
+        preparing={preparing}
         currentTime={currentTime}
         duration={duration}
         random={random}
@@ -884,7 +1187,15 @@ export default function App() {
         liked={liked.has(current)}
         volume={volume}
         muted={muted}
-        onPlay={() => (audioRef.current.paused ? startPlayback() : audioRef.current.pause())}
+        outputPref={outputPref}
+        outputs={outputs}
+        outputMenu={outputMenu}
+        onOutputToggle={openOutputMenu}
+        onOutputPick={chooseOutput}
+        onPlay={() => {
+          if (audioRef.current.paused) startPlayback();
+          else { cancelPlayRef.current = true; audioRef.current.pause(); }
+        }}
         onStep={step}
         onSeek={value => { audioRef.current.currentTime = value; setCurrentTime(value); }}
         onShuffle={() => { setRandom(value => !value); showToast(random ? '按顺序播放' : '随机漫游已开启'); }}
@@ -903,11 +1214,22 @@ export default function App() {
       <div id="toast" className={toastText ? 'show' : ''} role="status">{toastText}</div>
       <audio
         ref={audioRef}
-        preload="metadata"
+        preload="auto"
         onPlay={() => setPlaying(true)}
         onPause={() => setPlaying(false)}
-        onTimeUpdate={event => setCurrentTime(event.currentTarget.currentTime || 0)}
+        onTimeUpdate={event => {
+          const time = event.currentTarget.currentTime || 0;
+          setCurrentTime(time);
+          // 断点记忆每 2 秒写一次，够还原又不会一直打本地存储
+          if (Math.floor(time) % 2 === 0) saveProgress(currentRef.current, time);
+        }}
         onLoadedMetadata={event => setDuration(Number.isFinite(event.currentTarget.duration) ? event.currentTarget.duration : 0)}
+        onCanPlay={() => {
+          // 当前这首已经能播了，顺手把下一首的歌词和音频一并预热
+          const next = tracks[(currentRef.current + 1) % tracks.length];
+          prefetchLrc(next.lyrics);
+          prefetchAudio(next.src);
+        }}
         onEnded={() => {
           if (repeat) startPlayback();
           else {
@@ -915,7 +1237,15 @@ export default function App() {
             selectTrack(next, true);
           }
         }}
-        onError={() => showToast('本地音源暂时无法读取')}
+        // 蓝牙/外接设备断开或切换时音源会被掐掉，等它回来自动接上
+        onEmptied={() => { if (playingRef.current) showToast('音源已断开，等待重连…'); }}
+        onStalled={() => { if (playingRef.current) reconnect(); }}
+        onWaiting={() => { if (playingRef.current) showToast('正在缓冲音源…'); }}
+        onError={() => {
+          saveProgress(currentRef.current, audioRef.current.currentTime || 0);
+          showToast('音源中断，正在重连…');
+          reconnect();
+        }}
       />
     </>
   );
