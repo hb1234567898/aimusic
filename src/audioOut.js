@@ -6,24 +6,23 @@
 // 所以这里给两种模式让用户自己选：
 //   viz    —— 律动可视化优先：接管音频进 Web Audio（默认，和以前一样）
 //   direct —— 原生输出优先：完全不接管，由浏览器自己把声音送到系统默认设备
-// 默认就是律动模式（viz），外接设备出问题只是它下面两种可选的应对手段。
+//
+// 重要：**模式只在当前页面会话里生效，不写进 localStorage**。
+// 之前把 direct 持久化过，结果手机上切过一次原生输出后，以后每次打开都默认没律动，
+// 用户还以为律动功能坏了。现在每次打开页面一律从 viz 开始；选过的输出设备照旧记住。
 const STORAGE_KEY = 'aimusic.audioOut';
 const DEFAULTS = { mode: 'viz', deviceId: '' };
 
 export const OUTPUT_MODES = {
   viz: { label: '律动可视化', hint: '默认。接管音频做频谱分析，背景跟着鼓点跳' },
-  direct: { label: '原生输出', hint: '不接管音频，交给浏览器直出。外接音箱异常时的兜底' }
+  direct: { label: '原生输出', hint: '不接管音频，交给浏览器直出。外接音箱异常时的兜底，刷新页面后自动恢复律动' }
 };
 
 export function readOutputPref() {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return { ...DEFAULTS };
-    const parsed = JSON.parse(raw);
-    return {
-      mode: parsed.mode === 'direct' ? 'direct' : 'viz',
-      deviceId: typeof parsed.deviceId === 'string' ? parsed.deviceId : ''
-    };
+    const raw = JSON.parse(localStorage.getItem(STORAGE_KEY));
+    // mode 永远从 viz 起步（会话内可切 direct），只恢复上次记住的输出设备
+    return { mode: 'viz', deviceId: raw && typeof raw === 'object' && typeof raw.deviceId === 'string' ? raw.deviceId : '' };
   } catch {
     return { ...DEFAULTS };
   }
@@ -31,7 +30,7 @@ export function readOutputPref() {
 
 export function saveOutputPref(pref) {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ mode: pref.mode, deviceId: pref.deviceId }));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ deviceId: pref.deviceId || '' }));
   } catch { /* 隐私模式下写不了就算了，不影响本次会话 */ }
 }
 

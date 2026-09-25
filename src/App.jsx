@@ -170,13 +170,20 @@ function LyricsPanel({ track, trackNumber, currentTime, duration, playing, audio
   const [shift, setShift] = useState(0);
   useLayoutEffect(() => {
     const measure = () => {
-      const target = rowRefs.current[activeIndex] || rowRefs.current[0] || headRef.current;
-      if (!target) return;
-      const viewport = trackRef.current?.parentElement;
-      if (!viewport) return;
-      const center = viewport.clientHeight / 2;
-      setShift(center - (target.offsetTop + target.offsetHeight / 2));
-    };
+    const target = rowRefs.current[activeIndex] || rowRefs.current[0] || headRef.current;
+    const track = trackRef.current;
+    const viewport = track?.parentElement;
+    if (!target || !track || !viewport) return;
+    const center = viewport.clientHeight / 2;
+    // 别滚出边界：开头时歌名必须完整可见（否则只剩半截标题挂在顶部），
+    // 结尾时最后一行也别孤零零地飘在视窗中间。
+    const raw = center - (target.offsetTop + target.offsetHeight / 2);
+    // 开头第一行时强制轨道贴顶：视窗太小时「把第一行居中」会把歌名裁掉半截，
+    // 干脆整块从顶上开始，歌名完整可见，歌词跟在下面。
+    const aligned = activeIndex === 0 ? 0 : raw;
+    const min = Math.min(0, viewport.clientHeight - track.offsetHeight);
+    setShift(Math.max(min, Math.min(0, aligned)));
+  };
     measure();
     // 字体替换、窗口变化、换行重排都会改高度，监听到就重新量一次
     const observer = new ResizeObserver(measure);
@@ -269,6 +276,8 @@ function Universe({ current, playing, currentTime, duration, onSelect, zoom, bac
     let focusedTrack = -1;
     let lastFrame = 0;
     let animationFrame = 0;
+    let refocusTimer = 0;
+    let wasPlaying = false;
 
     const focusTrack = id => {
       const card = coordinates.find(item => item.track.id === id);
@@ -418,6 +427,11 @@ function Universe({ current, playing, currentTime, duration, onSelect, zoom, bac
       const maxR = half * cell;
       const cx = width * 0.5;
       const cy = height * (mobile ? 0.62 : 0.68);
+      // 移动端歌词块在左上角，而节拍隆起原本发生在地形正中，两者完全不呼应。
+      // 这里只把「节拍中心」往歌词那侧平移（横向 + 纵向往屏幕上方），
+      // 普通波形、噪点、气流仍以地形原点为基准，整体构图不变。
+      const beatX = mobile ? -maxR * 0.04 : 0;
+      const beatZ = mobile ? maxR * 0.82 : 0;
       const cosP = Math.cos(TOPO_PITCH);
       const sinP = Math.sin(TOPO_PITCH);
       // 焦距按屏宽反算：让最近一排刚好铺出屏幕外，避免只有中间一小块、四周留空
@@ -461,7 +475,9 @@ function Universe({ current, playing, currentTime, duration, onSelect, zoom, bac
         for (let col = 0; col < grid; col += 1) {
           const x = (col - half) * cell;
           const dist = Math.sqrt(x * x + z * z);
-          const center = Math.exp(-(dist * dist) / (maxR * maxR * 0.10)) * subBass * 190;
+          // 节拍中心：鼓点隆起、涟漪、整拍抬升都以它为核心（移动端已挪到歌词附近）
+          const bd = Math.sqrt((x - beatX) * (x - beatX) + (z - beatZ) * (z - beatZ));
+          const center = Math.exp(-(bd * bd) / (maxR * maxR * (mobile ? 0.07 : 0.10))) * subBass * 190;
           const wave = (Math.sin(x * 0.012 + time * 0.6) * Math.cos(z * 0.010 - time * 0.45) * 0.5 + 0.5) * lowMid * 96;
           const flow = (Math.sin((x + z) * 0.016 - time * 1.1) * 0.5 + 0.5) * mid * 74;
           const spike = Math.sin(x * 0.037 + topoSeed) * Math.cos(z * 0.029 - topoSeed) > 0.86 ? highMid * 145 : 0;
@@ -470,11 +486,11 @@ function Universe({ current, playing, currentTime, duration, onSelect, zoom, bac
           let rip = 0;
           for (let ri = 0; ri < topoRipples.length; ri += 1) {
             const age = time - topoRipples[ri].t0;
-            const d = Math.abs(dist - age * 620);
+            const d = Math.abs(bd - age * 620);
             if (d < 220) rip += Math.cos(d / 220 * Math.PI / 2) * topoRipples[ri].amp * 92 * Math.max(0, 1 - age / 3.2);
           }
           // 每一拍把整块地形整体顶一下，节奏看得见
-          const kick = beatPulse * 17 * Math.exp(-(dist * dist) / (maxR * maxR * 0.5));
+          const kick = beatPulse * 17 * Math.exp(-(bd * bd) / (maxR * maxR * (mobile ? 0.35 : 0.5)));
           // 静止时也留一层极缓的呼吸，画面不至于完全死掉
           const idle = 7 * (Math.sin(x * 0.006 + time * 0.35) * Math.cos(z * 0.005 - time * 0.28) * 0.5 + 0.5);
           const h = 8 + center + wave + flow + spike + spark + grain + rip + kick + idle;
@@ -629,11 +645,14 @@ function Universe({ current, playing, currentTime, duration, onSelect, zoom, bac
           element.style.boxShadow = '';
           delete element.dataset.glow;
         }
-        // 背面卡片直接淡到不可见，避免在正面卡片后面堆成一列
+        // 背面卡片直接淡到不可见，避免在正面卡片后面堆成一列。
+        // 移动端卡片更密、屏幕更小，用更陡的三次方曲线：只有最前一层保持清晰，
+        // 后面的卡片大幅透明，不然整个画面糊成一团。
         const fade = Math.max(0, Math.min(1, (depth + 0.5) / 1.5));
-        element.style.opacity = String(active ? 1 : 0.05 + fade * fade * 0.85);
+        const alpha = mobile ? 0.04 + fade * fade * fade * 0.96 : 0.05 + fade * fade * 0.85;
+        element.style.opacity = String(active ? 1 : alpha);
         element.style.visibility = (!active && fade <= 0.002) ? 'hidden' : 'visible';
-        element.style.filter = `brightness(${0.45 + (depth + 1) * 0.3})`;
+        element.style.filter = `brightness(${mobile ? 0.4 + (depth + 1) * 0.25 : 0.45 + (depth + 1) * 0.3})`;
         element.style.zIndex = String(active ? 90 : Math.round((depth + 1) * 30) + 1);
         const interactive = depth >= -0.3;
         element.style.pointerEvents = interactive ? 'auto' : 'none';
@@ -644,9 +663,17 @@ function Universe({ current, playing, currentTime, duration, onSelect, zoom, bac
     const animate = timestamp => {
       const dt = Math.min(timestamp - lastFrame || 16, 32);
       lastFrame = timestamp;
-      if (propsRef.current.playing && focusedTrack !== propsRef.current.current) {
+      // 直接点播放（没换歌）也要把镜头转到正在播的那首，否则按了播放却看不见它在哪。
+      if (propsRef.current.playing && !wasPlaying && !dragging) {
         focusedTrack = propsRef.current.current;
         focusTrack(focusedTrack);
+      }
+      wasPlaying = propsRef.current.playing;
+      // 播放时也允许自由拖着浏览：只在「换歌」的瞬间自动对焦，
+      // 不再每帧把镜头硬拽回当前曲目（那样一松手就被拉回去，等于没法翻）。
+      if (focusedTrack !== propsRef.current.current) {
+        focusedTrack = propsRef.current.current;
+        if (!dragging) focusTrack(focusedTrack);
       }
       if (!dragging) {
         if (focusing) {
@@ -681,6 +708,8 @@ function Universe({ current, playing, currentTime, duration, onSelect, zoom, bac
       velocityX = 0;
       velocityY = 0;
       focusing = false;
+      // 又上手拖了，取消上一次的「转回当前歌曲」倒计时
+      clearTimeout(refocusTimer);
       universe.classList.add('dragging');
       captureTarget = event.target.closest('.card') || universe;
       captureTarget.setPointerCapture(event.pointerId);
@@ -714,7 +743,16 @@ function Universe({ current, playing, currentTime, duration, onSelect, zoom, bac
       try { captureTarget?.releasePointerCapture(event.pointerId); } catch { /* pointer already released */ }
       captureTarget = null;
       pointerId = null;
-      if (propsRef.current.playing) focusTrack(propsRef.current.current);
+      // 播放中松手后先让你随便看，3 秒内没拖到别的歌（也没点开别的卡）
+      // 就平滑转回正在播的那首；中途切了歌则以新的当前曲目为准。
+      clearTimeout(refocusTimer);
+      if (propsRef.current.playing) {
+        refocusTimer = setTimeout(() => {
+          if (dragging) return;
+          focusedTrack = propsRef.current.current;
+          focusTrack(propsRef.current.current);
+        }, 3000);
+      }
     };
     const preventSelection = event => event.preventDefault();
     const onKeyDown = event => {
@@ -742,6 +780,7 @@ function Universe({ current, playing, currentTime, duration, onSelect, zoom, bac
     animationFrame = requestAnimationFrame(animate);
     return () => {
       cancelAnimationFrame(animationFrame);
+      clearTimeout(refocusTimer);
       // 离开宇宙视图时把节拍值归零，免得停在某一帧的亮度上
       document.getElementById('lyrics-panel')?.style.setProperty('--beat', '0');
       playerElement?.style.setProperty('--beat', '0');
@@ -817,7 +856,20 @@ function Journal({ onOpen }) {
 }
 
 function Player({ track, current, playing, preparing, currentTime, duration, random, repeat, liked, volume, muted, outputPref, outputs, outputMenu, onOutputToggle, onOutputPick, onPlay, onStep, onSeek, onShuffle, onRepeat, onFavorite, onVolume, onMute, onOpen }) {
-  const progress = duration ? currentTime / duration * 100 : 0;
+  // duration 未知（metadata 没到 / iOS 对 mp3 常报 Infinity）时进度条必须整体禁用，
+  // 千万不能用 100 当 max：断点续播把 currentTime 设到 120s 的话，滑块会顶到最右边。
+  const safeDuration = Number.isFinite(duration) && duration > 0 ? duration : 0;
+  // 拖动进度条期间用本地值渲染，否则 timeupdate 每 250ms 一次的重渲染
+  // 会和手指拖动打架，表现就是滑块往回跳、松手位置不对。
+  const [scrub, setScrub] = useState(null);
+  const shownTime = scrub ?? Math.min(currentTime, safeDuration || currentTime);
+  const progress = safeDuration ? Math.min(shownTime, safeDuration) / safeDuration * 100 : 0;
+  const commitScrub = () => {
+    if (scrub !== null) {
+      onSeek(scrub);
+      setScrub(null);
+    }
+  };
   return (
     <footer className="player glass">
       <div className="now">
@@ -843,9 +895,30 @@ function Player({ track, current, playing, preparing, currentTime, duration, ran
           <button className="icon secondary" onClick={onRepeat} aria-label="循环播放" aria-pressed={repeat}>↻</button>
         </div>
         <div className="timeline">
-          <time>{formatTime(currentTime)}</time>
-          <input type="range" min="0" max={duration || 100} value={currentTime} step="0.1" aria-label="播放进度" style={{ '--fill': `${progress}%` }} onChange={event => onSeek(Number(event.target.value))} />
-          <time>{formatTime(duration)}</time>
+          <time>{formatTime(shownTime)}</time>
+          <input
+            type="range"
+            min="0"
+            max={safeDuration || 1}
+            step="0.1"
+            disabled={!safeDuration}
+            aria-label="播放进度"
+            style={{ '--fill': `${progress}%` }}
+            value={scrub ?? shownTime}
+            onChange={event => {
+              const value = Number(event.target.value);
+              if (Number.isFinite(value)) {
+                setScrub(value);
+                onSeek(value);
+              }
+            }}
+            onPointerUp={commitScrub}
+            onTouchEnd={commitScrub}
+            onMouseUp={commitScrub}
+            onKeyUp={commitScrub}
+            onBlur={commitScrub}
+          />
+          <time>{formatTime(safeDuration)}</time>
         </div>
       </div>
       <div className="player-right">
@@ -1045,16 +1118,19 @@ export default function App() {
     if (next.mode === outputPref.mode && next.deviceId === outputPref.deviceId) return;
     saveOutputPref(next);
     const taken = Boolean(analysisRef.current.context);
-    // 音频被接管之后没法原地还原成原生路由（浏览器限制），但这里刻意不去 reload：
-    // 强制刷新会打断外接音箱和蓝牙的连接，交给用户自己决定什么时候重启页面。
-    if (next.mode !== outputPref.mode && taken) {
-      setOutputPref(next);
-      showToast(next.mode === 'direct' ? '已保存，下次打开时按原生输出播放' : '已保存，下次打开时恢复律动');
+    // 音频被接管之后没法原地还原成原生路由（浏览器限制），这里刻意不 reload：
+    // 强制刷新会打断外接音箱和蓝牙的连接。模式本来就不持久化，刷新后自然回到律动。
+    if (next.mode === 'direct' && taken) {
+      showToast('音频已被律动接管，刷新页面后可按原生输出播放');
       return;
     }
     setOutputPref(next);
     if (next.mode === 'direct') {
-      showToast('已切到原生输出，律动暂停');
+      showToast('已切到原生输出，律动暂停；刷新页面后恢复默认律动');
+      return;
+    }
+    if (next.mode === 'viz' && !outputPref.deviceId) {
+      showToast('已恢复律动可视化，下次播放生效');
       return;
     }
     const ok = await applySink(audioRef.current, analysisRef.current.context, next.deviceId);
@@ -1076,34 +1152,49 @@ export default function App() {
     // 原生输出模式：绝不接管音频。外接音箱/蓝牙的路由交给浏览器，音质优先。
     if (outputPrefRef.current.mode === 'direct') return;
     const AudioEngine = window.AudioContext || window.webkitAudioContext;
-    if (!AudioEngine) return;
+    // 内核不支持或之前接管失败过：直接按原生输出放，别把播放一起拖死
+    if (!AudioEngine || analysis.takeoverFailed) return;
     if (!analysis.context) {
-      // latencyHint 默认是 interactive（约 128 帧的小缓冲），蓝牙和 USB 声卡上
-      // 很容易 buffer underrun，表现就是声音断续、咔哒声。playback 用大缓冲，稳得多。
       try {
-        analysis.context = new AudioEngine({ latencyHint: 'playback' });
+        // latencyHint 默认是 interactive（约 128 帧的小缓冲），蓝牙和 USB 声卡上
+        // 很容易 buffer underrun，表现就是声音断续、咔哒声。playback 用大缓冲，稳得多。
+        try {
+          analysis.context = new AudioEngine({ latencyHint: 'playback' });
+        } catch {
+          analysis.context = new AudioEngine();
+        }
+        analysis.analyser = analysis.context.createAnalyser();
+        analysis.analyser.fftSize = 128;
+        analysis.analyser.smoothingTimeConstant = 0.6;
+        analysis.spectrum = new Uint8Array(analysis.analyser.frequencyBinCount);
+        analysis.source = analysis.context.createMediaElementSource(audio);
+        analysis.source.connect(analysis.analyser);
+        analysis.analyser.connect(analysis.context.destination);
+        // 地形背景需要更细的频谱：单独挂一个高分辨率 analyser，节拍检测也走它
+        analysis.fine = analysis.context.createAnalyser();
+        analysis.fine.fftSize = 1024;
+        analysis.fine.smoothingTimeConstant = 0.55;
+        analysis.fineBins = new Uint8Array(analysis.fine.frequencyBinCount);
+        analysis.source.connect(analysis.fine);
+        // 只有在菜单里明确挑了设备才去改输出口，否则一律不碰，
+        // 免得每次开播都把外接音箱/蓝牙的链路重新协商一遍。
+        if (outputPrefRef.current.deviceId) applySink(audio, analysis.context, outputPrefRef.current.deviceId);
       } catch {
-        analysis.context = new AudioEngine();
+        // 部分移动端内核（老 WebView / WeChat X5）createMediaElementSource 会抛异常，
+        // 之前这里直接把 startPlayback 一起 catch 掉了，表现是根本不出声。
+        // 现在兜底：标记失败并退回原生输出，律动没了但声音必须正常。
+        analysis.context = null;
+        analysis.analyser = null;
+        analysis.source = null;
+        analysis.fine = null;
+        analysis.takeoverFailed = true;
+        setOutputPref(previous => (previous.mode === 'direct' ? previous : { ...previous, mode: 'direct' }));
+        showToast('当前浏览器不支持律动接管，已用原生输出播放');
+        return;
       }
-      analysis.analyser = analysis.context.createAnalyser();
-      analysis.analyser.fftSize = 128;
-      analysis.analyser.smoothingTimeConstant = 0.6;
-      analysis.spectrum = new Uint8Array(analysis.analyser.frequencyBinCount);
-      analysis.source = analysis.context.createMediaElementSource(audio);
-      analysis.source.connect(analysis.analyser);
-      analysis.analyser.connect(analysis.context.destination);
-      // 地形背景需要更细的频谱：单独挂一个高分辨率 analyser，节拍检测也走它
-      analysis.fine = analysis.context.createAnalyser();
-      analysis.fine.fftSize = 1024;
-      analysis.fine.smoothingTimeConstant = 0.55;
-      analysis.fineBins = new Uint8Array(analysis.fine.frequencyBinCount);
-      analysis.source.connect(analysis.fine);
-      // 只有在菜单里明确挑了设备才去改输出口，否则一律不碰，
-      // 免得每次开播都把外接音箱/蓝牙的链路重新协商一遍。
-      if (outputPrefRef.current.deviceId) applySink(audio, analysis.context, outputPrefRef.current.deviceId);
     }
     if (analysis.context.state === 'suspended') await analysis.context.resume();
-  }, []);
+  }, [setOutputPref, showToast]);
 
   // 播放前先把歌词和音源都等齐：歌词最慢等 2.6s，音源最慢等 8s，
   // 超时就直接开播，宁可歌词晚一点到，也不能卡住不出声。
@@ -1215,7 +1306,12 @@ export default function App() {
       <audio
         ref={audioRef}
         preload="auto"
-        onPlay={() => setPlaying(true)}
+        onPlay={() => {
+          setPlaying(true);
+          // iOS 上 AudioContext 的 resume 必须贴近用户手势，播放事件里再兜一次底，
+          // 否则会出现「进度在走但没有声音」的假播放状态。
+          analysisRef.current.context?.resume?.().catch(() => {});
+        }}
         onPause={() => setPlaying(false)}
         onTimeUpdate={event => {
           const time = event.currentTarget.currentTime || 0;
