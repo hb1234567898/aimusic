@@ -1,3 +1,9 @@
+const assetVersion = import.meta.env.VITE_ORBIT_ASSET_VERSION || 'dev';
+const versionAsset = path => `${path}${path.includes('?') ? '&' : '?'}v=${assetVersion}`;
+// 这些值来自当前 public/assets 中实际 MP3 的媒体元数据（秒）。
+// 某些 ColorOS 浏览器会先把 duration 报成 Infinity 或错误的临时值，播放器用它兜底。
+const trackDurations = [226, 161, 205, 213, 183, 148, 149, 130, 232, 206, 129, 219, 131, 215, 213, 197, 192, 235, 179];
+
 export const tracks = [
   { id:0, title:"If The Sun Burns Out Tonight", artist:"VALORANT, Grabbitz, Oli Sykes, Courtney LaPlante", album:"VALORANT Original Music", genre:"VALORANT", cover:"assets/01/cover.jpg", src:"assets/01/If_The_Sun_Burns_Out_Tonight-VALORANT.mp3", lyrics:"assets/01/If_The_Sun_Burns_Out_Tonight-VALORANT.lrc", sourceUrl:"https://open.spotify.com/album/30wcEnAwWs8vMajB23SPx5" },
   { id:1, title:"superHuman", artist:"AUDREY NUNA, VALORANT", album:"VALORANT Original Music", genre:"VALORANT", cover:"assets/02/cover.jpg", src:"assets/02/superHuman-Audrey Nuna,VALORANT.mp3", lyrics:"assets/02/superHuman-Audrey Nuna,VALORANT.lrc", sourceUrl:"https://open.spotify.com/album/3BfiwgwqmGt5JYZLGtLA1b" },
@@ -18,5 +24,11 @@ export const tracks = [
   { id:16, title:"RISE (instrumental)", artist:"Mako, The Word Alive, The Glitch Mob", album:"Worlds 2018", genre:"英雄联盟", cover:"assets/17/cover.jpg", src:"assets/17/RISE (instrumental)-Mako,The Word Alive,The Glitch Mob.mp3", lyrics:"assets/17/RISE (instrumental)-Mako,The Word Alive,The Glitch Mob.lrc", sourceUrl:"https://open.spotify.com/album/4bpSYIKaoI5AXkA48iNRSx" },
   { id:17, title:"Legends Never Die", artist:"League of Legends, Against The Current", album:"Worlds 2017", genre:"英雄联盟", cover:"assets/18/cover.jpg", src:"assets/18/Legends Never Die-英雄联盟,Against the Current.mp3", lyrics:"assets/18/Legends Never Die-英雄联盟,Against the Current.lrc", sourceUrl:"https://open.spotify.com/album/3YsV3Mh57qUXomaiVC1EU6" },
   { id:18, title:"Ignite (cloudfield Bootleg)", artist:"cloudfield, Zedd", album:"Worlds 2016 · Bootleg", genre:"英雄联盟", cover:"assets/19/cover.jpg", src:"assets/19/Ignite (cloudfield Bootleg)-cloudfield,Zedd.mp3", lyrics:"assets/19/Ignite (cloudfield Bootleg)-cloudfield,Zedd.lrc", sourceUrl:"https://soundcloud.com/cloudfieldmusic/zedd-ignite-cloudfield-bootleg" }
-].map(track => ({...track, note:`${track.title} · ${track.artist}。当前页面使用 assets 目录中的完整本地音源、对应封面和同步歌词。`}));
-
+].map((track, index) => ({
+  ...track,
+  duration: trackDurations[index],
+  cover: versionAsset(track.cover),
+  src: versionAsset(track.src),
+  lyrics: versionAsset(track.lyrics),
+  note: `${track.title} · ${track.artist}。当前页面使用 assets 目录中的完整本地音源、对应封面和同步歌词。`,
+}));

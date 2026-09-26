@@ -320,6 +320,11 @@ export class BeatEngine {
 
     // 快起慢落：起振立刻顶上去，收得慢一点才看得出「砰」的一下。
     // 高频是碎拍，落得要比底鼓快，否则连成一片糊掉。
+    // 把这一帧刚到达耳朵的起振点单独交给视觉层。hit / hitHigh 是带衰减的包络，
+    // 适合做连续呼吸；onset / onsetHigh 只亮一帧，视觉层才能分清“新的一下”
+    // 和上一拍尚未落完的尾巴。
+    const onset = this.pendingHit;
+    const onsetHigh = this.pendingHigh;
     const decayLow = Math.pow(0.05, dt / (this.lowLatency ? 0.26 : 0.32));
     const decayHigh = Math.pow(0.05, dt / 0.17);
     this.hit[0] *= decayLow;
@@ -334,6 +339,8 @@ export class BeatEngine {
       treble: this.level[1],
       hit: this.hit[0],
       hitHigh: this.hit[1],
+      onset,
+      onsetHigh,
       level: this.energy
     };
   }

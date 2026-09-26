@@ -2,18 +2,54 @@
   "name": "orbit-music",
   "private": true,
   "version": "1.0.0",
+  "description": "ORBIT liquid-glass music universe with a local QQ Music bridge",
+  "author": "ORBIT Music",
   "type": "module",
+  "main": "desktop/main.js",
   "scripts": {
     "dev": "vite --host 127.0.0.1 --port 8765",
+    "dev:electron": "node scripts/dev-electron.mjs",
+    "start": "electron .",
     "build": "vite build",
-    "preview": "vite preview --host 127.0.0.1 --port 8765"
+    "preview": "vite preview --host 127.0.0.1 --port 8765",
+    "build:electron:dir": "npm run build && electron-builder --dir",
+    "build:electron": "npm run build && electron-builder"
   },
   "dependencies": {
+    "express": "^4.21.2",
     "react": "^19.3.0",
     "react-dom": "^19.3.0"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^6.1.1",
+    "electron": "^42.5.0",
+    "electron-builder": "^26.15.3",
     "vite": "^8.3.0"
+  },
+  "build": {
+    "appId": "com.orbit.music.desktop",
+    "productName": "ORBIT Music",
+    "electronDist": "node_modules/electron/dist",
+    "directories": {
+      "output": "release-fix8"
+    },
+    "files": [
+      "dist/**/*",
+      "desktop/**/*",
+      "server/**/*",
+      "local-server.mjs",
+      "package.json",
+      "THIRD_PARTY_NOTICES.md"
+    ],
+    "win": {
+      "target": ["nsis", "portable"],
+      "signAndEditExecutable": false
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "shortcutName": "ORBIT Music"
+    }
   }
 }

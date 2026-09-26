@@ -66,6 +66,33 @@ export function parseLrc(source) {
   return { rows, meta };
 }
 
+const flattenForCompare = text => String(text || '').toLowerCase()
+  .replace(/[\s　,.，。!！?？、\-—_~～/()（）\[\]【】《》'":：]/g, '');
+
+// QQ 音乐的歌词开头经常带一行「歌名」或「歌名 - 歌手」，面板顶部已经有标题了，
+// 再显示一遍就是重复。只在开头那段"头部区"（meta 行或 3 秒内）里摘掉它，
+// 碰到第一句正常歌词就停手——否则副歌里恰好等于歌名的整句唱词会被误删。
+export function stripTitleEcho(rows, title, artist) {
+  if (!Array.isArray(rows) || !rows.length) return rows;
+  const titleKey = flattenForCompare(title);
+  if (!titleKey) return rows;
+  const artistKey = flattenForCompare(artist);
+  const out = rows.slice();
+  let index = 0;
+  while (index < out.length) {
+    const row = out[index];
+    if (!row.meta && row.time > 3) break;
+    const key = flattenForCompare(row.text);
+    if (key === titleKey
+      || (artistKey && (key === titleKey + artistKey || key === artistKey + titleKey))) {
+      out.splice(index, 1);
+      continue;
+    }
+    index += 1;
+  }
+  return out;
+}
+
 const cache = new Map();
 
 export function ensureLrc(url) {
@@ -74,8 +101,13 @@ export function ensureLrc(url) {
   if (existing) return existing;
 
   const request = fetch(url, { cache: 'no-store' })
-    .then(response => {
+    .then(async response => {
       if (!response.ok) throw new Error(`Local lyrics ${response.status}`);
+      const contentType = response.headers.get('content-type') || '';
+      if (contentType.includes('application/json')) {
+        const payload = await response.json();
+        return payload.lyric || payload.tlyric || '';
+      }
       return response.text();
     })
     .then(text => {

@@ -133,6 +133,13 @@ export function saveLastTrack(index) {
   } catch { /* 隐私模式写不了就算了 */ }
 }
 
+export function clearPlaybackMemory() {
+  try {
+    localStorage.removeItem(PROGRESS_KEY);
+    localStorage.removeItem(LAST_TRACK_KEY);
+  } catch { /* 清理失败不影响当前会话 */ }
+}
+
 // 返回应当恢复到第几秒；不到续播门槛就返回 0
 export function resumeAt(trackId, duration) {
   const saved = Number(readProgress()[trackId]);
