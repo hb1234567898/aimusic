@@ -680,6 +680,61 @@ async function handleQQSongUrl(mid, mediaMid, qualityPreference, cookieText = qq
   };
 }
 
+// 播放权限自检：把「QQ 认为这首歌要不要付费」和「QQ 给不给我们地址」
+// 两件事并排摆出来。两件事对着看，就能区分「账号没会员」和「我们代码写错了」：
+//   fee=1 且拿不到地址 → QQ 不认这个登录态的会员权限（最可能是登错号）
+//   fee=0 且拿不到地址 → 我们这条取地址链路有问题
+//   fee=1 但拿到了完整地址 → 会员是生效的
+async function handleQQPlaybackSelfCheck(mid, mediaMid, cookieText = qqCookie) {
+  const cookie = qqCookieObject(cookieText);
+  const userId = qqCookieUin(cookie);
+  const musicKey = qqCookieMusicKey(cookie);
+  const profile = normalizeQQProfile(cookieText);
+  const songmid = String(mid || '').trim();
+  if (!songmid) {
+    return { ok: false, error: 'MISSING_MID', loggedIn: profile.loggedIn, userId, nickname: profile.nickname };
+  }
+
+  let song = null;
+  try {
+    song = await qqSongDetail(songmid, { mid: songmid, mediaMid });
+  } catch { /* 详情拿不到不影响取地址测试，留空继续 */ }
+
+  let url = null;
+  try {
+    url = await handleQQSongUrl(songmid, mediaMid, 'exhigh', cookieText);
+  } catch (error) {
+    url = { playable: false, error: 'REQUEST_FAILED', message: error.message };
+  }
+
+  let verdict = 'denied';
+  if (url?.playable && url.trial) verdict = 'trial';
+  else if (url?.playable) verdict = 'ok';
+
+  return {
+    ok: true,
+    loggedIn: profile.loggedIn,
+    userId,
+    nickname: profile.nickname,
+    musicKeyReady: Boolean(userId && musicKey),
+    song: {
+      mid: songmid,
+      name: song?.name || '',
+      artist: song?.artist || '',
+      fee: Number(song?.fee || 0),
+    },
+    url: {
+      playable: Boolean(url?.playable),
+      level: url?.level || '',
+      quality: url?.quality || '',
+      trial: Boolean(url?.trial),
+      error: url?.error || '',
+      message: url?.message || '',
+    },
+    verdict,
+  };
+}
+
 function decodeHtmlEntities(text) {
   return String(text || '')
     .replace(/&#x([0-9a-f]+);/gi, (_, hex) => String.fromCharCode(parseInt(hex, 16)))
@@ -851,6 +906,16 @@ async function handleRoute(req, res, parsedUrl, writeJson = writeJsonResponse) {
         currentCookie(req),
       );
       writeJson(res, result.loggedIn === false ? 401 : 200, result);
+      return true;
+    }
+
+    if (pathname === '/api/qq/selfcheck') {
+      const result = await handleQQPlaybackSelfCheck(
+        parsedUrl.searchParams.get('mid') || '',
+        parsedUrl.searchParams.get('mediaMid') || '',
+        currentCookie(req),
+      );
+      writeJson(res, result.ok ? 200 : 400, result);
       return true;
     }
 

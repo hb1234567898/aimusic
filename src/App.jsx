@@ -2121,6 +2121,8 @@ export default function App() {
         activePlaylistId={activePlaylist}
         onSwitchPlaylist={handleSwitchPlaylist}
         onRemovePlaylist={handleRemovePlaylist}
+        sampleSongs={tracks.filter(item => item.provider === 'qq' && item.mid).slice(0, 8)
+          .map(item => ({ mid: item.mid, mediaMid: item.mediaMid, title: item.title }))}
       />
       <div id="toast" className={toastText ? 'show' : ''} role="status">{toastText}</div>
       <audio

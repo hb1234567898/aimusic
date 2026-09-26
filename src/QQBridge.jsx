@@ -43,9 +43,17 @@ function describeDiagnostics(diagnostics) {
   return parts.join('；');
 }
 
+function verdictLabel(verdict) {
+  if (verdict === 'ok') return '可完整播放';
+  if (verdict === 'trial') return '仅试听片段';
+  if (verdict === 'denied') return '拿不到地址';
+  return '检测失败';
+}
+
 export default function QQBridge({
   open, onClose, onImport, onClear, importedCount,
   playlists = [], activePlaylistId = null, onSwitchPlaylist, onRemovePlaylist,
+  sampleSongs = [],
 }) {
   const panelRef = useRef(null);
   const [profile, setProfile] = useState({ loggedIn: false });
@@ -60,6 +68,8 @@ export default function QQBridge({
   // 歌单先"打开"再挑歌，不直接一把梭全导：preview 存歌单曲目，selected 存勾选的 key
   const [preview, setPreview] = useState(null);
   const [selected, setSelected] = useState(() => new Set());
+  const [checkRows, setCheckRows] = useState([]);
+  const [checkRunning, setCheckRunning] = useState(false);
   const desktop = Boolean(window.orbitDesktop?.isDesktop);
 
   const songKey = (song, index) => `${song?.mid || song?.id || index}`;
@@ -75,6 +85,27 @@ export default function QQBridge({
     if (profile.loggedIn) return profile.nickname || `QQ ${profile.userId || ''}`.trim();
     return desktop ? '等待安全登录' : '网页版可搜索，桌面版支持账号歌单';
   }, [desktop, profile]);
+  // 自检结论：把「要付费的歌一律被拒」和「连免费歌都拿不到」区分开——
+  // 前者是账号侧没有会员权限，后者才是我们代码的问题。
+  const checkSummary = useMemo(() => {
+    if (!checkRows.length) return '';
+    const playable = checkRows.filter(row => row.verdict === 'ok').length;
+    const trial = checkRows.filter(row => row.verdict === 'trial').length;
+    const hard = checkRows.filter(row => row.verdict !== 'ok' && row.verdict !== 'trial').length;
+    const blockedRows = checkRows.filter(row => row.verdict !== 'ok');
+    if (!blockedRows.length) return `全部 ${playable} 首都能完整播放，当前登录态的会员权限是生效的。`;
+
+    const freeBlocked = blockedRows.filter(row => !Number(row.song?.fee)).length;
+    const uin = checkRows.find(row => row.userId)?.userId;
+    const who = uin ? `当前登录 QQ ${uin}` : '当前登录态';
+    if (freeBlocked > 0) {
+      return `${freeBlocked} 首免费歌也拿不到完整地址——这不是会员问题，是取地址链路本身失败了。`;
+    }
+    const detail = trial ? `${trial} 首只给了试听片段` : '';
+    const hardPart = hard ? `${detail ? '，' : ''}${hard} 首连地址都没有` : '';
+    return `${who}：需要会员的 ${blockedRows.length} 首歌${detail}${hardPart}，免费歌却能完整播放。说明 QQ 没把这个登录态认定成会员——多半是 ORBIT 里登录的号和买会员的号不是同一个。`;
+  }, [checkRows]);
+
   const playlistGroups = useMemo(() => ([
     { key: 'created', label: '我创建的歌单', items: accountPlaylists.filter(playlist => !playlist.subscribed) },
     { key: 'collected', label: '我收藏的歌单', items: accountPlaylists.filter(playlist => playlist.subscribed) },
@@ -163,6 +194,31 @@ export default function QQBridge({
     } finally {
       setBusy('');
     }
+  };
+
+  // 播放权限自检：拿当前歌单里的歌逐首去问 QQ「要不要付费 + 给不给地址」。
+  // 这两件事对着看就能定案——要付费且拿不到 = QQ 不认这个登录态的会员；
+  // 免费也拿不到 = 我们这条取地址的链路有问题。
+  const runSelfCheck = async () => {
+    const songs = (sampleSongs || []).filter(item => item?.mid).slice(0, 5);
+    if (!songs.length) {
+      setError('当前歌单里还没有 QQ 歌曲，先导入几首再自检。');
+      return;
+    }
+    setCheckRunning(true);
+    setCheckRows([]);
+    setError('');
+    const rows = [];
+    for (const song of songs) {
+      try {
+        const result = await requestJson(`/api/qq/selfcheck?mid=${encodeURIComponent(song.mid)}&mediaMid=${encodeURIComponent(song.mediaMid || '')}`);
+        rows.push({ title: song.title, ...result });
+      } catch (reason) {
+        rows.push({ title: song.title, ok: false, url: { message: reason.message } });
+      }
+      setCheckRows(rows.slice());
+    }
+    setCheckRunning(false);
   };
 
   const importSongs = (songs, meta = null) => {
@@ -285,6 +341,27 @@ export default function QQBridge({
             ? <button onClick={logout} disabled={Boolean(busy)}>退出</button>
             : <button onClick={login} disabled={busy === 'login'}>{busy === 'login' ? '等待登录…' : '连接 QQ 音乐'}</button>}
         </div>
+
+        {profile.loggedIn && (
+          <div className="bridge-check">
+            <div className="bridge-check-head">
+              <span><strong>播放权限自检</strong><small>用当前歌单的歌问 QQ：要不要付费、给不给地址</small></span>
+              <button onClick={runSelfCheck} disabled={checkRunning || Boolean(busy)}>{checkRunning ? '检测中…' : '检测'}</button>
+            </div>
+            {checkSummary ? <p className="bridge-check-summary">{checkSummary}</p> : null}
+            {checkRows.length > 0 && (
+              <ul className="bridge-check-list">
+                {checkRows.map((row, index) => (
+                  <li key={`${row.song?.mid || index}`} className={row.verdict || 'failed'}>
+                    <strong>{row.title || row.song?.name || '未知歌曲'}</strong>
+                    <span>{Number(row.song?.fee) ? '需付费' : '免费'}</span>
+                    <b>{verdictLabel(row.verdict)}</b>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )}
 
         <div className="bridge-grid">
           <div className="bridge-pane bridge-search">

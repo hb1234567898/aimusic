@@ -31,7 +31,7 @@
     "productName": "ORBIT Music",
     "electronDist": "node_modules/electron/dist",
     "directories": {
-      "output": "release-fix8"
+      "output": "release-fix9"
     },
     "files": [
       "dist/**/*",
