@@ -4,6 +4,7 @@ contextBridge.exposeInMainWorld('orbitDesktop', {
   isDesktop: true,
   platform: process.platform,
   openQQLogin: () => ipcRenderer.invoke('orbit-open-qq-login'),
+  refreshQQLogin: () => ipcRenderer.invoke('orbit-refresh-qq-login'),
   clearQQLogin: () => ipcRenderer.invoke('orbit-clear-qq-login'),
 });
 

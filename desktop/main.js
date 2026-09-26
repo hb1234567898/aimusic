@@ -12,6 +12,7 @@ const appUrl = process.env.ORBIT_ELECTRON_DEV_URL || `http://127.0.0.1:${process
 const QQ_LOGIN_PARTITION = 'persist:orbit-music-qq-login';
 const QQ_LOGIN_URL = 'https://y.qq.com/n/ryqq/profile';
 let mainWindow = null;
+let qqCookieSyncTimer = null;
 
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 app.commandLine.appendSwitch('force_high_performance_gpu');
@@ -76,6 +77,28 @@ async function syncCookieToBridge(cookie) {
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(payload.error || 'QQ 登录信息同步失败');
   return payload;
+}
+
+async function syncCurrentQQPlaybackCookie() {
+  const cookieSession = session.fromPartition(QQ_LOGIN_PARTITION);
+  const cookie = await readQQCookieHeader(cookieSession);
+  if (!hasLogin(cookie, true)) return { ok: false, playbackKeyReady: false };
+  const profile = await syncCookieToBridge(cookie);
+  return { ok: true, profile, playbackKeyReady: true };
+}
+
+function scheduleQQCookieSync() {
+  clearTimeout(qqCookieSyncTimer);
+  qqCookieSyncTimer = setTimeout(() => {
+    syncCurrentQQPlaybackCookie().catch(() => {});
+  }, 250);
+}
+
+function watchQQPlaybackCookies() {
+  const cookieSession = session.fromPartition(QQ_LOGIN_PARTITION);
+  cookieSession.cookies.on('changed', (_event, cookie) => {
+    if (cookie?.domain && isQQDomain(cookie.domain)) scheduleQQCookieSync();
+  });
 }
 
 function createLoginWindow(owner) {
@@ -152,7 +175,8 @@ async function openQQMusicLoginWindow(owner) {
       if (pollTimer) clearInterval(pollTimer);
       try {
         const cookie = await readQQCookieHeader(cookieSession);
-        if (hasLogin(cookie)) await finish({ ok: true, cookie, partial: !hasLogin(cookie, true) });
+        if (hasLogin(cookie, true)) await finish({ ok: true, cookie });
+        else if (hasLogin(cookie)) resolve({ ok: false, cancelled: true, error: 'QQ_PLAYBACK_COOKIE_MISSING', message: 'QQ 账号已登录，但播放授权尚未完成。请重新连接并等待窗口自动关闭。' });
         else resolve({ ok: false, cancelled: true, message: 'QQ 音乐登录窗口已关闭' });
       } catch (error) {
         resolve({ ok: false, error: error.message });
@@ -188,7 +212,7 @@ async function createWindow() {
   // 用户不需要每次打开都重新扫码。
   try {
     const savedCookie = await readQQCookieHeader(session.fromPartition(QQ_LOGIN_PARTITION));
-    if (hasLogin(savedCookie)) await syncCookieToBridge(savedCookie);
+    if (hasLogin(savedCookie, true)) await syncCookieToBridge(savedCookie);
   } catch { /* 离线启动时仍然允许打开本地曲库 */ }
   mainWindow = new BrowserWindow({
     width: 1480,
@@ -212,12 +236,16 @@ async function createWindow() {
 }
 
 ipcMain.handle('orbit-open-qq-login', (event) => openQQMusicLoginWindow(BrowserWindow.fromWebContents(event.sender)));
+ipcMain.handle('orbit-refresh-qq-login', () => syncCurrentQQPlaybackCookie());
 ipcMain.handle('orbit-clear-qq-login', async () => {
   await session.fromPartition(QQ_LOGIN_PARTITION).clearStorageData({ storages: ['cookies', 'localstorage', 'indexdb', 'cachestorage'] });
   await fetch(`${appUrl}/api/qq/logout`, { method: 'POST' }).catch(() => {});
   return { ok: true };
 });
 
-app.whenReady().then(createWindow);
+app.whenReady().then(async () => {
+  watchQQPlaybackCookies();
+  await createWindow();
+});
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
 app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });

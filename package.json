@@ -1,7 +1,7 @@
 {
   "name": "orbit-music",
   "private": true,
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "ORBIT liquid-glass music universe with a local QQ Music bridge",
   "author": "ORBIT Music",
   "type": "module",
@@ -10,6 +10,7 @@
     "dev": "vite --host 127.0.0.1 --port 8765",
     "dev:electron": "node scripts/dev-electron.mjs",
     "start": "electron .",
+    "test": "node --test server/qq-auth.test.mjs",
     "build": "vite build",
     "preview": "vite preview --host 127.0.0.1 --port 8765",
     "build:electron:dir": "npm run build && electron-builder --dir",
@@ -29,9 +30,8 @@
   "build": {
     "appId": "com.orbit.music.desktop",
     "productName": "ORBIT Music",
-    "electronDist": "node_modules/electron/dist",
     "directories": {
-      "output": "release-fix9"
+      "output": "release"
     },
     "files": [
       "dist/**/*",

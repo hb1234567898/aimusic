@@ -1894,16 +1894,30 @@ export default function App() {
     setPreparing(true);
     clearTimeout(slowHintTimer.current);
     slowHintTimer.current = setTimeout(() => showToast('正在准备歌词与音源…'), 700);
-    // QQ 曲目：探测服务端是不是只拿到了试听片段（响应头里带标记）。
-    // 只探测 1 个字节，不会真把整首歌拉一遍。
-    if (tracks[currentRef.current].provider === 'qq') {
-      fetch(tracks[currentRef.current].src, { headers: { Range: 'bytes=0-0' }, cache: 'no-store' })
-        .then(response => {
-          if (response.headers.get('x-orbit-qq-trial')) showToast('只拿到试听片段（约 60 秒）· 完整播放需要会员权限');
-        })
-        .catch(() => { /* 探测失败不影响正式播放 */ });
-    }
     try {
+      const currentTrack = tracks[currentRef.current];
+      if (currentTrack.provider === 'qq' && window.orbitDesktop?.refreshQQLogin) {
+        // 每次播放前从 Electron 的持久会话同步最新 qm_keyst/qqmusic_key。
+        // QQ 可能在网页会话里刷新播放凭据，只在扫码完成时同步一次会让 VIP
+        // 账号过一段时间后退化成试听或无地址。
+        const auth = await window.orbitDesktop.refreshQQLogin();
+        if (!auth?.ok || !auth?.playbackKeyReady) {
+          showToast('QQ 播放授权未完成，请重新连接 QQ 音乐');
+          setQQBridgeOpen(true);
+          return;
+        }
+        // 选歌时 audio 可能已经用旧凭据请求失败；同步后强制重新加载。
+        audioRef.current.load();
+      }
+      // 探测服务端是不是只拿到了试听片段（响应头里带标记）。
+      // 只探测 1 个字节，不会真把整首歌拉一遍。
+      if (currentTrack.provider === 'qq') {
+        fetch(currentTrack.src, { headers: { Range: 'bytes=0-0' }, cache: 'no-store' })
+          .then(response => {
+            if (response.headers.get('x-orbit-qq-trial')) showToast('只拿到试听片段（约 60 秒）· 完整播放需要对应会员权限');
+          })
+          .catch(() => { /* 探测失败不影响正式播放 */ });
+      }
       await ensureAudioAnalysis();
       await waitForLrc(tracks[currentRef.current].lyrics, 2600);
       await waitUntilPlayable(audioRef.current, 8000);

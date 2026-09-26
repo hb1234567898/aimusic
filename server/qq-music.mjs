@@ -7,6 +7,7 @@ const QQ_PLAYLIST_LIST_LIMIT = 1000;
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36';
 const QQ_HEADERS = {
   Referer: 'https://y.qq.com/',
+  Origin: 'https://y.qq.com',
   'User-Agent': UA,
 };
 const QQ_QUALITY_CANDIDATES = [
@@ -81,6 +82,23 @@ function qqCookiePlaybackKey(cookie = qqCookieObject()) {
   return cookie.qm_keyst || cookie.qqmusic_key || cookie.music_key || cookie.wxskey || '';
 }
 
+function qqCookiePlaybackKeyName(cookie = qqCookieObject()) {
+  return ['qm_keyst', 'qqmusic_key', 'music_key', 'wxskey'].find((key) => cookie[key]) || '';
+}
+
+export function inspectQQAuth(cookieText = qqCookie) {
+  const cookie = qqCookieObject(cookieText);
+  const userId = qqCookieUin(cookie);
+  const accountKey = qqCookieMusicKey(cookie);
+  const playbackKey = qqCookiePlaybackKey(cookie);
+  return {
+    userId,
+    accountReady: Boolean(userId && accountKey),
+    playbackReady: Boolean(userId && playbackKey),
+    playbackKeyName: qqCookiePlaybackKeyName(cookie),
+  };
+}
+
 function decodeCookieValue(value) {
   try {
     return decodeURIComponent(String(value || '').replace(/\+/g, '%20')).trim();
@@ -136,15 +154,18 @@ function normalizeQQProfile(cookieText = qqCookie) {
   const cookie = qqCookieObject(cookieText);
   const userId = qqCookieUin(cookie);
   const musicKey = qqCookieMusicKey(cookie);
+  const playbackKey = qqCookiePlaybackKey(cookie);
   const nickname = qqCookieNickname(cookie, userId) || (userId ? `QQ ${userId}` : 'QQ 音乐');
   return {
     provider: 'qq',
-    loggedIn: Boolean(userId && musicKey),
+    loggedIn: Boolean(userId && playbackKey),
+    accountLoggedIn: Boolean(userId && musicKey),
     userId,
     nickname,
     avatar: qqCookieAvatar(cookie, userId),
     hasCookie: Boolean(cookieText),
-    playbackKeyReady: Boolean(userId && qqCookiePlaybackKey(cookie)),
+    playbackKeyReady: Boolean(userId && playbackKey),
+    playbackKeyName: qqCookiePlaybackKeyName(cookie),
   };
 }
 
@@ -606,8 +627,19 @@ async function handleQQSongUrl(mid, mediaMid, qualityPreference, cookieText = qq
 
   const cookie = qqCookieObject(cookieText);
   const userId = qqCookieUin(cookie) || '0';
-  const musicKey = qqCookieMusicKey(cookie);
   const playbackKey = qqCookiePlaybackKey(cookie);
+  if (!playbackKey) {
+    return {
+      provider: 'qq',
+      url: '',
+      playable: false,
+      error: 'QQ_PLAYBACK_LOGIN_REQUIRED',
+      loggedIn: false,
+      accountLoggedIn: Boolean(userId !== '0' && qqCookieMusicKey(cookie)),
+      playbackKeyReady: false,
+      message: 'QQ 音乐网页账号已登录，但尚未取得播放授权。请在桌面版重新连接 QQ 音乐，并等待登录窗口自动完成授权。',
+    };
+  }
   const mediaIds = [mediaMid, songmid].map((value) => String(value || '').trim()).filter(Boolean);
   const uniqueMediaIds = [...new Set(mediaIds)];
   const fileCandidates = uniqueMediaIds.flatMap((id) => (
@@ -635,8 +667,9 @@ async function handleQQSongUrl(mid, mediaMid, qualityPreference, cookieText = qq
     platform: '20',
     ...(filenames.length ? { filename: filenames } : {}),
   };
-  const comm = { uin: userId, format: 'json', ct: musicKey ? 19 : 24, cv: 0 };
-  if (musicKey) comm.authst = musicKey;
+  // vkey 只能使用 QQ 音乐发放的播放凭据。p_skey/skey 只代表网页账号登录，
+  // 把它们塞进 authst 会造成“看起来已登录，但会员歌曲仍无地址”的假登录。
+  const comm = { uin: userId, format: 'json', ct: 19, cv: 0, authst: playbackKey };
 
   const data = await qqMusicRequest({
     comm,
@@ -672,11 +705,10 @@ async function handleQQSongUrl(mid, mediaMid, qualityPreference, cookieText = qq
     url: '',
     playable: false,
     error: 'QQ_URL_UNAVAILABLE',
-    loggedIn: Boolean(userId && musicKey),
-    playbackKeyReady: Boolean(userId && playbackKey),
-    message: !musicKey
-      ? 'QQ 音乐需要登录后才能获取播放地址'
-      : `QQ 音乐没有返回「${info?.filename || '这首歌曲'}」的播放地址。该歌曲需要会员（部分目录还要豪华绿钻）；如果你确认已开通，请核对 ORBIT 登录的是不是购买会员的那个 QQ 号`,
+    loggedIn: Boolean(userId !== '0' && playbackKey),
+    accountLoggedIn: Boolean(userId !== '0' && qqCookieMusicKey(cookie)),
+    playbackKeyReady: Boolean(userId !== '0' && playbackKey),
+    message: `QQ 音乐没有向当前登录账号返回「${info?.filename || '这首歌曲'}」的完整播放地址。请确认 ORBIT 中登录的是已开通对应会员且拥有该地区版权的账号。`,
   };
 }
 
