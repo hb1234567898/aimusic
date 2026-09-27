@@ -51,6 +51,7 @@ nav span{font-size:11px;margin-left:6px;color:#888}
 .edition{font-size:12px;color:#b0b0b7;letter-spacing:1.5px;display:flex;gap:12px;align-items:center}
 .edition>span:not(.live-dot){color:#555}.live-dot{width:5px;height:5px;border-radius:100%;background:#dedee2;box-shadow:0 0 10px #fff6}
 .bridge-launch{display:flex;align-items:center;gap:9px;padding:9px 13px;border:1px solid #ffffff14;border-radius:999px;color:#c7c7ce;font-size:10px;letter-spacing:1.2px;background:linear-gradient(120deg,#ffffff12,#ffffff05);box-shadow:inset 0 1px 0 #ffffff26}.bridge-launch:hover{background:#ffffff18}.bridge-launch .live-dot{flex:0 0 5px}
+.netease-launch .live-dot{background:#ef4242;box-shadow:0 0 10px #ef4242}.netease-bridge{background:linear-gradient(145deg,#2f2a2bd9,#111216ed 56%,#241d1ed9)}.netease-bridge .bridge-pulse.online{background:#ef4242;box-shadow:0 0 13px #ef4242,0 0 0 6px #ef42421c}
 main{height:calc(var(--app-vh,100dvh) - 100px - var(--safe-top));position:relative;overflow:hidden;touch-action:none;cursor:grab;user-select:none;-webkit-user-select:none}
 main.dragging{cursor:grabbing}
 main img{-webkit-user-drag:none;user-select:none;-webkit-user-select:none}

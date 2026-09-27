@@ -6,6 +6,9 @@ contextBridge.exposeInMainWorld('orbitDesktop', {
   openQQLogin: () => ipcRenderer.invoke('orbit-open-qq-login'),
   refreshQQLogin: () => ipcRenderer.invoke('orbit-refresh-qq-login'),
   clearQQLogin: () => ipcRenderer.invoke('orbit-clear-qq-login'),
+  openNeteaseLogin: () => ipcRenderer.invoke('orbit-open-netease-login'),
+  refreshNeteaseLogin: () => ipcRenderer.invoke('orbit-refresh-netease-login'),
+  clearNeteaseLogin: () => ipcRenderer.invoke('orbit-clear-netease-login'),
   setKeepAwake: enabled => ipcRenderer.invoke('orbit-set-keep-awake', Boolean(enabled)),
   // 远程更新
   appVersion: () => ipcRenderer.invoke('orbit-app-version'),

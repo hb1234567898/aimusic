@@ -2,11 +2,13 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { tracks } from './tracks.js';
 import { ensureLrc, prefetchLrc, stripTitleEcho, waitForLrc } from './lyrics.js';
 import QQBridge from './QQBridge.jsx';
+import NeteaseBridge from './NeteaseBridge.jsx';
 import {
   clearQQTracks, hydrateQQTracks, importQQPlaylist, listQQPlaylists,
   getActivePlaylistId, removeQQPlaylist, switchQQPlaylist,
   QQ_QUALITY_KEY, QQ_QUALITY_OPTIONS, readQQQuality,
 } from './qqLibrary.js';
+import { clearNeteaseTracks, hydrateNeteaseTracks, importNeteaseTracks } from './neteaseLibrary.js';
 import { BeatEngine } from './beatEngine.js';
 import { OUTPUT_MODES, applySink, clearPlaybackMemory, listOutputs, readBeatOffset, readLastTrack, readOutputPref, requestDeviceLabels, resumeAt, saveBeatOffset, saveLastTrack, saveOutputPref, saveProgress } from './audioOut.js';
 import { createTerrainGL } from './terrainGL.js';
@@ -15,6 +17,7 @@ const IS_DESKTOP_APP = Boolean(window.orbitDesktop?.isDesktop)
   || (import.meta.env.DEV && new URLSearchParams(location.search).has('desktop-preview'));
 if (IS_DESKTOP_APP) tracks.splice(0, tracks.length);
 hydrateQQTracks(tracks);
+hydrateNeteaseTracks(tracks);
 
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 // 模式 4 是 GPU 地形：走独立的 WebGL 画布，前面四种仍是原来的 Canvas 2D 画法
@@ -352,7 +355,7 @@ function useUpdater() {
   return { supported, state, version, check, download, install, dismiss };
 }
 
-function Header({ journal, onChangeView, onOpenBridge, qqCount, playlists, activePlaylist, onSwitchPlaylist, updater }) {
+function Header({ journal, onChangeView, onOpenBridge, onOpenNetease, qqCount, neteaseCount, playlists, activePlaylist, onSwitchPlaylist, updater }) {
   return (
     <header>
       <a className="brand" href="./" aria-label="ORBIT 首页">
@@ -366,6 +369,7 @@ function Header({ journal, onChangeView, onOpenBridge, qqCount, playlists, activ
         <PlaylistSwitch playlists={playlists} activePlaylist={activePlaylist} onSwitchPlaylist={onSwitchPlaylist} />
         <div className="edition">
           <button className="bridge-launch" onClick={onOpenBridge}><span className="live-dot" /> QQ 音乐桥{qqCount ? ` · ${qqCount}` : ''}</button>
+          <button className="bridge-launch netease-launch" onClick={onOpenNetease}><span className="live-dot" /> 网易云{neteaseCount ? ` · ${neteaseCount}` : ''}</button>
           <span>/</span>
           {updater.supported
             ? <button className="version-chip" onClick={updater.check} title="检查更新">{updater.version ? `v${updater.version}` : '更新'}</button>
@@ -1878,6 +1882,7 @@ export default function App() {
   });
   const [journal, setJournal] = useState(false);
   const [qqBridgeOpen, setQQBridgeOpen] = useState(false);
+  const [neteaseBridgeOpen, setNeteaseBridgeOpen] = useState(false);
   const updater = useUpdater();
   // 导入的歌单列表 + 当前生效的那个（null 表示「全部」）
   const [qqPlaylists, setQQPlaylists] = useState(listQQPlaylists);
@@ -2221,6 +2226,15 @@ export default function App() {
         // 选歌时 audio 可能已经用旧凭据请求失败；同步后强制重新加载。
         audioRef.current.load();
       }
+      if (currentTrack.provider === 'netease' && window.orbitDesktop?.refreshNeteaseLogin) {
+        const auth = await window.orbitDesktop.refreshNeteaseLogin();
+        if (!auth?.ok) {
+          showToast('网易云登录已失效，请重新扫码登录');
+          setNeteaseBridgeOpen(true);
+          return;
+        }
+        audioRef.current.load();
+      }
       // 探测服务端是不是只拿到了试听片段（响应头里带标记）。
       // 只探测 1 个字节，不会真把整首歌拉一遍。
       if (currentTrack.provider === 'qq') {
@@ -2401,6 +2415,25 @@ export default function App() {
     showToast('已清空 QQ 导入曲库');
   }, [showToast]);
 
+  const handleNeteaseImport = useCallback((songs, meta) => {
+    const result = importNeteaseTracks(tracks, songs, meta);
+    if (!result.added) return 0;
+    applyPlaylistChange(getActivePlaylistId(), `已导入 ${result.added} 首网易云歌曲 · ${result.name}`);
+    return result.added;
+  }, [applyPlaylistChange]);
+
+  const handleNeteaseClear = useCallback(() => {
+    const currentWasNetease = tracks[currentRef.current]?.provider === 'netease';
+    clearNeteaseTracks(tracks);
+    clearPlaybackMemory();
+    if (currentWasNetease || !tracks[currentRef.current]) {
+      applyPlaylistChange(getActivePlaylistId(), '已清空网易云导入曲库');
+    } else {
+      setLibraryVersion(version => version + 1);
+      showToast('已清空网易云导入曲库');
+    }
+  }, [applyPlaylistChange, showToast]);
+
   const step = direction => {
     if (!tracks.length) return;
     const next = random ? (current + 1 + Math.floor(Math.random() * (tracks.length - 1))) % tracks.length : current + direction;
@@ -2415,7 +2448,9 @@ export default function App() {
         journal={journal}
         onChangeView={setJournal}
         onOpenBridge={() => setQQBridgeOpen(true)}
+        onOpenNetease={() => setNeteaseBridgeOpen(true)}
         qqCount={tracks.filter(item => item.provider === 'qq').length}
+        neteaseCount={tracks.filter(item => item.provider === 'netease').length}
         playlists={qqPlaylists}
         activePlaylist={activePlaylist}
         onSwitchPlaylist={handleSwitchPlaylist}
@@ -2505,6 +2540,13 @@ export default function App() {
         sampleSongs={tracks.filter(item => item.provider === 'qq' && item.mid).slice(0, 8)
           .map(item => ({ mid: item.mid, mediaMid: item.mediaMid, title: item.title }))}
       />
+      <NeteaseBridge
+        open={neteaseBridgeOpen}
+        onClose={() => setNeteaseBridgeOpen(false)}
+        onImport={handleNeteaseImport}
+        onClear={handleNeteaseClear}
+        importedCount={tracks.filter(item => item.provider === 'netease').length}
+      />
       <div id="toast" className={toastText ? 'show' : ''} role="status">{toastText}</div>
       <audio
         ref={audioRef}
@@ -2558,6 +2600,13 @@ export default function App() {
               .then(response => response.json().catch(() => ({})))
               .then(payload => showToast(payload.message || payload.error || 'QQ 音乐没有返回播放地址'))
               .catch(() => showToast('QQ 音乐没有返回播放地址'));
+            return;
+          }
+          if (track?.provider === 'netease') {
+            fetch(track.src, { cache: 'no-store' })
+              .then(response => response.json().catch(() => ({})))
+              .then(payload => showToast(payload.message || payload.error || '网易云没有返回可播放地址'))
+              .catch(() => showToast('网易云没有返回可播放地址'));
             return;
           }
           showToast('音源中断，正在重连…');

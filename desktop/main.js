@@ -1,4 +1,4 @@
-// QQ Music login handling is adapted from Sonic Topography for local,
+// QQ Music and Netease Cloud Music login handling is adapted from Sonic Topography for local,
 // personal non-commercial use. See THIRD_PARTY_NOTICES.md.
 import { app, BrowserWindow, ipcMain, powerSaveBlocker, session, shell } from 'electron';
 // electron-updater 是 CJS 包，autoUpdater 用 Object.defineProperty 的 getter 挂出来，
@@ -16,8 +16,11 @@ const isDev = Boolean(process.env.ORBIT_ELECTRON_DEV_URL);
 const appUrl = process.env.ORBIT_ELECTRON_DEV_URL || `http://127.0.0.1:${process.env.PORT || '45437'}`;
 const QQ_LOGIN_PARTITION = 'persist:orbit-music-qq-login';
 const QQ_LOGIN_URL = 'https://y.qq.com/n/ryqq/profile';
+const NETEASE_LOGIN_PARTITION = 'persist:orbit-music-netease-login';
+const NETEASE_LOGIN_URL = 'https://music.163.com/#/login';
 let mainWindow = null;
 let qqCookieSyncTimer = null;
+let neteaseCookieSyncTimer = null;
 let displaySleepBlockerId = null;
 
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
@@ -74,6 +77,23 @@ async function readQQCookieHeader(cookieSession) {
     .join('; ');
 }
 
+function isNeteaseDomain(domain) {
+  const clean = String(domain || '').replace(/^\./, '').toLowerCase();
+  return clean === '163.com' || clean.endsWith('.163.com');
+}
+
+async function readNeteaseCookieHeader(cookieSession) {
+  const cookies = await cookieSession.cookies.get({});
+  const priority = ['MUSIC_U', '__csrf', 'NMTID', 'MUSIC_A', 'MUSIC_R_T', 'MUSIC_SNS'];
+  const picked = new Map(cookies.filter(cookie => cookie?.name && isNeteaseDomain(cookie.domain)).map(cookie => [cookie.name, cookie.value || '']));
+  const extras = [...picked.keys()].filter(key => !priority.includes(key)).sort();
+  return [...priority, ...extras].filter(key => picked.get(key)).map(key => `${key}=${picked.get(key)}`).join('; ');
+}
+
+function hasNeteaseLogin(cookieText) {
+  return Boolean(parseCookieHeader(cookieText).MUSIC_U);
+}
+
 async function syncCookieToBridge(cookie) {
   const response = await fetch(`${appUrl}/api/qq/login/cookie`, {
     method: 'PUT',
@@ -93,6 +113,21 @@ async function syncCurrentQQPlaybackCookie() {
   return { ok: true, profile, playbackKeyReady: true };
 }
 
+async function syncNeteaseCookieToBridge(cookie) {
+  const response = await fetch(`${appUrl}/api/netease/login/cookie`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ cookie }),
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(payload.message || payload.error || '网易云登录信息同步失败');
+  return payload;
+}
+
+async function syncCurrentNeteaseCookie() {
+  const cookie = await readNeteaseCookieHeader(session.fromPartition(NETEASE_LOGIN_PARTITION));
+  if (!hasNeteaseLogin(cookie)) return { ok: false };
+  return { ok: true, profile: await syncNeteaseCookieToBridge(cookie) };
+}
+
 function scheduleQQCookieSync() {
   clearTimeout(qqCookieSyncTimer);
   qqCookieSyncTimer = setTimeout(() => {
@@ -107,7 +142,16 @@ function watchQQPlaybackCookies() {
   });
 }
 
-function createLoginWindow(owner) {
+function watchNeteaseCookies() {
+  const cookieSession = session.fromPartition(NETEASE_LOGIN_PARTITION);
+  cookieSession.cookies.on('changed', (_event, cookie) => {
+    if (!cookie?.domain || !isNeteaseDomain(cookie.domain)) return;
+    clearTimeout(neteaseCookieSyncTimer);
+    neteaseCookieSyncTimer = setTimeout(() => syncCurrentNeteaseCookie().catch(() => {}), 300);
+  });
+}
+
+function createLoginWindow(owner, { partition = QQ_LOGIN_PARTITION, title = 'QQ 音乐登录 · ORBIT Bridge' } = {}) {
   return new BrowserWindow({
     width: 900,
     height: 720,
@@ -116,10 +160,10 @@ function createLoginWindow(owner) {
     parent: owner && !owner.isDestroyed() ? owner : undefined,
     show: false,
     autoHideMenuBar: true,
-    title: 'QQ 音乐登录 · ORBIT Bridge',
+    title,
     backgroundColor: '#111111',
     webPreferences: {
-      partition: QQ_LOGIN_PARTITION,
+      partition,
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
@@ -193,6 +237,74 @@ async function openQQMusicLoginWindow(owner) {
   });
 }
 
+async function openNeteaseLoginWindow(owner) {
+  const cookieSession = session.fromPartition(NETEASE_LOGIN_PARTITION);
+  const initialCookie = await readNeteaseCookieHeader(cookieSession);
+  if (hasNeteaseLogin(initialCookie)) {
+    return { ok: true, profile: await syncNeteaseCookieToBridge(initialCookie), reused: true };
+  }
+
+  return new Promise(resolve => {
+    let settled = false;
+    let pollTimer = null;
+    const loginWindow = createLoginWindow(owner, {
+      partition: NETEASE_LOGIN_PARTITION,
+      title: '网易云音乐扫码登录 · ORBIT Bridge',
+    });
+    const finish = async result => {
+      if (settled) return;
+      settled = true;
+      clearInterval(pollTimer);
+      if (!loginWindow.isDestroyed()) loginWindow.close();
+      if (!result.ok) return resolve(result);
+      try {
+        resolve({ ok: true, profile: await syncNeteaseCookieToBridge(result.cookie) });
+      } catch (error) { resolve({ ok: false, error: error.message }); }
+    };
+    const checkCookies = async () => {
+      try {
+        const cookie = await readNeteaseCookieHeader(cookieSession);
+        if (hasNeteaseLogin(cookie)) finish({ ok: true, cookie });
+      } catch { /* keep polling */ }
+    };
+    // 网易云登录浮层默认可能停在手机号页；只点击官方页面里的“登录”和
+    // “二维码登录/扫码登录”，不注入账号密码，也不接触第三方登录服务。
+    const selectQrLogin = () => loginWindow.webContents.executeJavaScript(`(() => {
+      const visible = el => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
+      const nodes = [...document.querySelectorAll('button,a,span,div')].filter(visible);
+      const login = nodes.find(el => /^(登录|立即登录)$/.test((el.textContent || '').trim()));
+      if (login) login.click();
+      setTimeout(() => {
+        const next = [...document.querySelectorAll('button,a,span,div')].filter(visible);
+        const qr = next.find(el => /(二维码登录|扫码登录)/.test((el.textContent || '').trim()));
+        if (qr) qr.click();
+      }, 450);
+    })()`, true).catch(() => {});
+
+    loginWindow.webContents.setWindowOpenHandler(({ url }) => {
+      if (/^https?:\/\/([^/]+\.)?163\.com/i.test(url)) loginWindow.loadURL(url).catch(() => {});
+      else if (/^https?:\/\//i.test(url)) shell.openExternal(url).catch(() => {});
+      return { action: 'deny' };
+    });
+    loginWindow.webContents.on('did-finish-load', () => {
+      checkCookies();
+      selectQrLogin();
+      setTimeout(selectQrLogin, 1300);
+      setTimeout(selectQrLogin, 2800);
+    });
+    loginWindow.on('ready-to-show', () => loginWindow.show());
+    loginWindow.on('closed', async () => {
+      if (settled) return;
+      clearInterval(pollTimer);
+      const cookie = await readNeteaseCookieHeader(cookieSession).catch(() => '');
+      if (hasNeteaseLogin(cookie)) finish({ ok: true, cookie });
+      else resolve({ ok: false, cancelled: true, message: '网易云扫码登录窗口已关闭' });
+    });
+    pollTimer = setInterval(checkCookies, 1000);
+    loginWindow.loadURL(NETEASE_LOGIN_URL).catch(error => finish({ ok: false, error: error.message }));
+  });
+}
+
 function waitForHttp(url, timeoutMs = 12000) {
   const started = Date.now();
   return new Promise((resolve, reject) => {
@@ -220,6 +332,10 @@ async function createWindow() {
     const savedCookie = await readQQCookieHeader(session.fromPartition(QQ_LOGIN_PARTITION));
     if (hasLogin(savedCookie, true)) await syncCookieToBridge(savedCookie);
   } catch { /* 离线启动时仍然允许打开本地曲库 */ }
+  try {
+    const savedCookie = await readNeteaseCookieHeader(session.fromPartition(NETEASE_LOGIN_PARTITION));
+    if (hasNeteaseLogin(savedCookie)) await syncNeteaseCookieToBridge(savedCookie);
+  } catch { /* 离线启动时仍然允许打开本地曲库 */ }
   mainWindow = new BrowserWindow({
     width: 1480,
     height: 920,
@@ -243,6 +359,8 @@ async function createWindow() {
 
 ipcMain.handle('orbit-open-qq-login', (event) => openQQMusicLoginWindow(BrowserWindow.fromWebContents(event.sender)));
 ipcMain.handle('orbit-refresh-qq-login', () => syncCurrentQQPlaybackCookie());
+ipcMain.handle('orbit-open-netease-login', event => openNeteaseLoginWindow(BrowserWindow.fromWebContents(event.sender)));
+ipcMain.handle('orbit-refresh-netease-login', () => syncCurrentNeteaseCookie());
 ipcMain.handle('orbit-set-keep-awake', (_event, enabled) => {
   if (enabled) {
     if (displaySleepBlockerId === null || !powerSaveBlocker.isStarted(displaySleepBlockerId)) {
@@ -327,8 +445,15 @@ ipcMain.handle('orbit-clear-qq-login', async () => {
   return { ok: true };
 });
 
+ipcMain.handle('orbit-clear-netease-login', async () => {
+  await session.fromPartition(NETEASE_LOGIN_PARTITION).clearStorageData({ storages: ['cookies', 'localstorage', 'indexdb', 'cachestorage'] });
+  await fetch(`${appUrl}/api/netease/logout`, { method: 'POST' }).catch(() => {});
+  return { ok: true };
+});
+
 app.whenReady().then(async () => {
   watchQQPlaybackCookies();
+  watchNeteaseCookies();
   await createWindow();
   // 窗口就绪后再挂 updater，之前发的事件没有接收方会丢
   wireUpdater();
