@@ -14,11 +14,40 @@
 import os from 'node:os';
 import path from 'node:path';
 import { createRequire } from 'node:module';
+import { spawn } from 'node:child_process';
 
 const require = createRequire(import.meta.url);
 const { build, Platform } = require('electron-builder');
 
 const outputDir = path.join(os.tmpdir(), 'orbit-build');
+
+// electron-builder 只识别 GH_TOKEN/GITHUB_TOKEN；日常 git push 则通常由
+// Windows Git Credential Manager 代管。两边原本互不相通，会出现代码能推送、
+// 制品却在最后一步报“token 未设置”。发布前把同一份凭据只注入当前 Node 进程，
+// 不写磁盘、不打印到日志。
+async function tokenFromGitCredential() {
+  return new Promise(resolve => {
+    let settled = false;
+    const finish = value => { if (!settled) { settled = true; resolve(value); } };
+    try {
+      const child = spawn('git', ['credential', 'fill'], { stdio: ['pipe', 'pipe', 'ignore'] });
+      let output = '';
+      child.stdout.on('data', chunk => { output += chunk.toString('utf8'); });
+      child.on('error', () => finish(''));
+      child.on('close', () => finish(((output.match(/^password=(.*)$/m) || [])[1] || '').trim()));
+      const timer = setTimeout(() => { try { child.kill(); } catch { /* already closed */ } finish(''); }, 25000);
+      child.on('close', () => clearTimeout(timer));
+      child.stdin.end('protocol=https\nhost=github.com\n\n');
+    } catch { finish(''); }
+  });
+}
+
+if (!process.env.GH_TOKEN && !process.env.GITHUB_TOKEN) {
+  process.env.GH_TOKEN = await tokenFromGitCredential();
+}
+if (!process.env.GH_TOKEN && !process.env.GITHUB_TOKEN) {
+  throw new Error('缺少 GitHub 发布凭据：请先登录 Git Credential Manager 或设置 GH_TOKEN');
+}
 
 console.log(`[release] 输出目录（工作区外）：${outputDir}`);
 
