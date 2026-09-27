@@ -458,6 +458,7 @@ function Universe({ current, playing, currentTime, duration, onSelect, zoom, bac
     let focusing = false;
     let focusedTrack = -1;
     let lastFrame = 0;
+    let lastBackdropFrame = 0;
     let animationFrame = 0;
     let refocusTimer = 0;
     let wasPlaying = false;
@@ -1316,7 +1317,14 @@ function Universe({ current, playing, currentTime, duration, onSelect, zoom, bac
           velocityY *= friction;
         }
       }
-      drawSoundfield(timestamp, dt / 1000);
+      // 拖动时把主线程和 GPU 优先留给卡片球面。背景律动降到约 20fps，
+      // 卡片本身仍按屏幕刷新率更新；松手后下一帧立即恢复完整律动。
+      const backdropInterval = dragging ? 48 : 0;
+      const backdropElapsed = timestamp - lastBackdropFrame;
+      if (!backdropInterval || backdropElapsed >= backdropInterval || !lastBackdropFrame) {
+        drawSoundfield(timestamp, Math.min(backdropElapsed || dt, 80) / 1000);
+        lastBackdropFrame = timestamp;
+      }
       drawSphere();
       animationFrame = requestAnimationFrame(animate);
     };
@@ -1341,20 +1349,21 @@ function Universe({ current, playing, currentTime, duration, onSelect, zoom, bac
     };
     const moveDrag = event => {
       if (!dragging || event.pointerId !== pointerId) return;
-      const samples = event.getCoalescedEvents?.() || [event];
-      samples.forEach(sample => {
-        const dx = sample.clientX - lastX;
-        const dy = sample.clientY - lastY;
-        const dt = Math.max(1, sample.timeStamp - lastPointerTime);
-        moved += Math.hypot(dx, dy);
-        rotation += dx * 0.004;
-        tilt = clamp(tilt - dy * 0.002, -tiltLimit, tiltLimit);
-        velocityX = velocityX * 0.68 + dx / dt * 0.004 * 0.32;
-        velocityY = velocityY * 0.68 - dy / dt * 0.002 * 0.32;
-        lastX = sample.clientX;
-        lastY = sample.clientY;
-        lastPointerTime = sample.timeStamp;
-      });
+      // 高频触摸屏一次事件可能塞进十几个历史采样；逐个重算会挤占渲染帧。
+      // 旋转只需要最新位置，速度也用整段位移计算，手感保持一致但工作量固定。
+      const samples = event.getCoalescedEvents?.();
+      const sample = samples?.length ? samples[samples.length - 1] : event;
+      const dx = sample.clientX - lastX;
+      const dy = sample.clientY - lastY;
+      const dt = Math.max(1, sample.timeStamp - lastPointerTime);
+      moved += Math.hypot(dx, dy);
+      rotation += dx * 0.004;
+      tilt = clamp(tilt - dy * 0.002, -tiltLimit, tiltLimit);
+      velocityX = velocityX * 0.68 + dx / dt * 0.004 * 0.32;
+      velocityY = velocityY * 0.68 - dy / dt * 0.002 * 0.32;
+      lastX = sample.clientX;
+      lastY = sample.clientY;
+      lastPointerTime = sample.timeStamp;
     };
     const endDrag = event => {
       if (!dragging || event.pointerId !== pointerId) return;
