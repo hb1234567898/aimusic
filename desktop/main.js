@@ -1,6 +1,7 @@
 // QQ Music login handling is adapted from Sonic Topography for local,
 // personal non-commercial use. See THIRD_PARTY_NOTICES.md.
 import { app, BrowserWindow, ipcMain, powerSaveBlocker, session, shell } from 'electron';
+import { autoUpdater } from 'electron-updater';
 import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -249,6 +250,72 @@ ipcMain.handle('orbit-set-keep-awake', (_event, enabled) => {
   }
   return { active: displaySleepBlockerId !== null && powerSaveBlocker.isStarted(displaySleepBlockerId) };
 });
+// ---- 远程更新 ----------------------------------------------------------------
+// 只在打包后的应用里跑：开发模式（electron . 或 dev server）下 electron-updater
+// 找不到 app-update.yml，会一路报错刷屏，所以这里直接关掉。
+const updaterEnabled = !isDev && app.isPackaged;
+
+function emitUpdateState(payload) {
+  mainWindow?.webContents?.send('orbit-update-state', payload);
+}
+
+function wireUpdater() {
+  if (!updaterEnabled) return;
+  // 自动下载关掉：由用户在 UI 里点「下载」再拉，避免后台偷跑流量。
+  // 但每次启动会静默检查一次，有新版只是提示，不打扰。
+  autoUpdater.autoDownload = false;
+  autoUpdater.autoInstallOnAppQuit = false;
+  autoUpdater.allowDowngrade = false;
+
+  autoUpdater.on('checking-for-update', () => emitUpdateState({ phase: 'checking' }));
+  autoUpdater.on('update-available', (info) => emitUpdateState({
+    phase: 'available',
+    version: info?.version || '',
+    releaseNotes: typeof info?.releaseNotes === 'string' ? info.releaseNotes : '',
+  }));
+  autoUpdater.on('update-not-available', (info) => emitUpdateState({ phase: 'idle', version: info?.version || app.getVersion() }));
+  autoUpdater.on('download-progress', (progress) => emitUpdateState({
+    phase: 'downloading',
+    percent: Math.min(100, Math.max(0, Math.round(progress?.percent || 0))),
+  }));
+  autoUpdater.on('update-downloaded', (info) => emitUpdateState({
+    phase: 'downloaded',
+    version: info?.version || '',
+  }));
+  autoUpdater.on('error', (error) => emitUpdateState({
+    phase: 'error',
+    message: error?.message || '检查更新失败',
+  }));
+}
+
+ipcMain.handle('orbit-app-version', () => ({ version: app.getVersion(), updaterEnabled }));
+ipcMain.handle('orbit-check-update', async () => {
+  if (!updaterEnabled) return { ok: false, reason: 'dev' };
+  try {
+    return await autoUpdater.checkForUpdates();
+  } catch (error) {
+    return { ok: false, reason: error?.message || 'check-failed' };
+  }
+});
+ipcMain.handle('orbit-download-update', async () => {
+  if (!updaterEnabled) return { ok: false, reason: 'dev' };
+  try {
+    await autoUpdater.downloadUpdate();
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, reason: error?.message || 'download-failed' };
+  }
+});
+ipcMain.handle('orbit-install-update', () => {
+  if (!updaterEnabled) return { ok: false, reason: 'dev' };
+  // 关掉 HTTP 服务再装，否则端口占着，装完重启会起不来。
+  // 安装包自己会拉起新版本。
+  setImmediate(() => {
+    autoUpdater.quitAndInstall(false, true);
+  });
+  return { ok: true };
+});
+
 ipcMain.handle('orbit-clear-qq-login', async () => {
   await session.fromPartition(QQ_LOGIN_PARTITION).clearStorageData({ storages: ['cookies', 'localstorage', 'indexdb', 'cachestorage'] });
   await fetch(`${appUrl}/api/qq/logout`, { method: 'POST' }).catch(() => {});
@@ -258,6 +325,9 @@ ipcMain.handle('orbit-clear-qq-login', async () => {
 app.whenReady().then(async () => {
   watchQQPlaybackCookies();
   await createWindow();
+  // 窗口就绪后再挂 updater，之前发的事件没有接收方会丢
+  wireUpdater();
+  if (updaterEnabled) autoUpdater.checkForUpdates().catch(() => {});
 });
 app.on('window-all-closed', () => {
   if (displaySleepBlockerId !== null && powerSaveBlocker.isStarted(displaySleepBlockerId)) powerSaveBlocker.stop(displaySleepBlockerId);

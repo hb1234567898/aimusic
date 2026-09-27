@@ -101,6 +101,7 @@ function SvgDefs() {
         <symbol id="i-orbit" viewBox="0 0 40 40"><ellipse cx="20" cy="20" rx="18" ry="8" transform="rotate(-35 20 20)" /><circle cx="20" cy="20" r="5" fill="currentColor" stroke="none" /></symbol>
         <symbol id="i-shuffle" viewBox="0 0 24 24"><path d="M3 6h3c5 0 7 12 12 12h3m-4-4 4 4-4 4M3 18h3c2 0 4-3 5-5m3-4c1-2 2-3 4-3h3m-4-4 4 4-4 4" /></symbol>
         <symbol id="i-wait" viewBox="0 0 24 24"><path d="M12 3a9 9 0 1 0 9 9" /></symbol>
+        <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6" strokeWidth="2" /></symbol>
       </defs>
     </svg>
   );
@@ -202,7 +203,71 @@ function PlaylistSwitch({ playlists, activePlaylist, onSwitchPlaylist }) {
   );
 }
 
-function Header({ journal, onChangeView, onOpenBridge, qqCount, playlists, activePlaylist, onSwitchPlaylist }) {
+const UPDATE_TEXT = {
+  checking: '正在检查更新…',
+  available: '有新版本可用',
+  downloading: '正在下载更新',
+  downloaded: '更新已下载',
+  error: '更新失败',
+};
+
+// 桌面端才有的能力：主进程在启动时会静默检查一次，结果通过 IPC 推过来。
+// 网页版拿不到 orbitDesktop.checkUpdate，整块 UI 直接不渲染。
+function useUpdater() {
+  const api = typeof window !== 'undefined' ? window.orbitDesktop : null;
+  const supported = Boolean(api?.isDesktop && api.onUpdateState && api.checkUpdate);
+  const [state, setState] = useState(null);
+  const [version, setVersion] = useState('');
+
+  useEffect(() => {
+    if (!supported) return undefined;
+    let alive = true;
+    api.appVersion().then(info => { if (alive) setVersion(info?.version || ''); }).catch(() => {});
+    const off = api.onUpdateState(next => setState(next));
+    return () => { alive = false; off?.(); };
+  }, [supported]);
+
+  const check = useCallback(() => (supported ? api.checkUpdate() : Promise.resolve()), [supported]);
+  const download = useCallback(() => (supported ? api.downloadUpdate() : Promise.resolve()), [supported]);
+  const install = useCallback(() => (supported ? api.installUpdate() : Promise.resolve()), [supported]);
+  const dismiss = useCallback(() => setState(null), []);
+
+  return { supported, state, version, check, download, install, dismiss };
+}
+
+function UpdaterCard({ updater }) {
+  const { state, supported, download, install, dismiss } = updater;
+  const [busy, setBusy] = useState(false);
+  if (!supported) return null;
+  const phase = state?.phase;
+  if (!phase || phase === 'idle') return null;
+  const percent = Math.min(100, Math.max(0, Number(state.percent || 0)));
+  const run = async fn => { setBusy(true); try { await fn(); } catch { /* 主进程已把错误推回来 */ } setBusy(false); };
+
+  return (
+    <aside className="updater-card glass" role="status" aria-live="polite">
+      <div className="updater-head">
+        <strong>{UPDATE_TEXT[phase] || '检查更新'}</strong>
+        {state.version ? <span>{state.version}</span> : null}
+      </div>
+      {phase === 'available' && state.releaseNotes
+        ? <p className="updater-notes">{String(state.releaseNotes).slice(0, 140)}</p>
+        : null}
+      {phase === 'downloading'
+        ? <div className="updater-bar" role="progressbar" aria-valuenow={percent} aria-valuemin={0} aria-valuemax={100}><i style={{ width: `${percent}%` }} /></div>
+        : null}
+      {phase === 'error' ? <p className="updater-notes">{state.message || '暂时连不上更新服务器'}</p> : null}
+      <div className="updater-actions">
+        {phase === 'available' ? <button onClick={() => run(download)} disabled={busy}>下载更新</button> : null}
+        {phase === 'downloaded' ? <button onClick={() => run(install)} disabled={busy}>重启安装</button> : null}
+        {phase === 'error' ? <button onClick={() => run(updater.check)} disabled={busy}>重试</button> : null}
+        {phase === 'checking' ? null : <button className="updater-later" onClick={dismiss} disabled={busy}>稍后</button>}
+      </div>
+    </aside>
+  );
+}
+
+function Header({ journal, onChangeView, onOpenBridge, qqCount, playlists, activePlaylist, onSwitchPlaylist, updater }) {
   return (
     <header>
       <a className="brand" href="./" aria-label="ORBIT 首页">
@@ -216,7 +281,10 @@ function Header({ journal, onChangeView, onOpenBridge, qqCount, playlists, activ
         <PlaylistSwitch playlists={playlists} activePlaylist={activePlaylist} onSwitchPlaylist={onSwitchPlaylist} />
         <div className="edition">
           <button className="bridge-launch" onClick={onOpenBridge}><span className="live-dot" /> QQ 音乐桥{qqCount ? ` · ${qqCount}` : ''}</button>
-          <span>/</span> SEP 2026
+          <span>/</span>
+          {updater.supported
+            ? <button className="version-chip" onClick={updater.check} title="检查更新">{updater.version ? `v${updater.version}` : '更新'}</button>
+            : 'SEP 2026'}
         </div>
       </div>
     </header>
@@ -1542,14 +1610,13 @@ function Player({ track, current, playing, preparing, currentTime, duration, ran
   };
   if (hidden) {
     return (
-      <button className="player-reveal glass" onClick={() => onHiddenChange(false)} aria-label="显示播放栏" title="显示播放栏">
-        <span aria-hidden="true">⌃</span><small>{playing ? '播放中' : '播放栏'}</small>
+      <button className="player-reveal glass" onClick={() => onHiddenChange(false)} aria-label="展开播放栏" title="展开播放栏">
+        <Icon name="chevron" className="reveal-chev" /><small>{playing ? '播放中' : '播放栏'}</small>
       </button>
     );
   }
   return (
     <footer className="player glass">
-      <button className="player-hide" onClick={() => onHiddenChange(true)} aria-label="隐藏播放栏" title="隐藏播放栏">⌄</button>
       <div className="now">
         <LiquidArt src={track.cover} alt={`${track.album} 专辑封面`} className="now-art" />
         <div className="now-copy">
@@ -1643,6 +1710,7 @@ function Player({ track, current, playing, preparing, currentTime, duration, ran
           )}
         </div>
         <button className="icon note-icon" onClick={onOpen} aria-label="阅读当前歌曲手记">☷</button>
+        <button className="icon collapse-btn" onClick={() => onHiddenChange(true)} aria-label="收起播放栏" title="收起播放栏"><Icon name="chevron" /></button>
       </div>
     </footer>
   );
@@ -1689,6 +1757,7 @@ export default function App() {
   });
   const [journal, setJournal] = useState(false);
   const [qqBridgeOpen, setQQBridgeOpen] = useState(false);
+  const updater = useUpdater();
   // 导入的歌单列表 + 当前生效的那个（null 表示「全部」）
   const [qqPlaylists, setQQPlaylists] = useState(listQQPlaylists);
   const [activePlaylist, setActivePlaylist] = useState(getActivePlaylistId);
@@ -2182,7 +2251,9 @@ export default function App() {
         playlists={qqPlaylists}
         activePlaylist={activePlaylist}
         onSwitchPlaylist={handleSwitchPlaylist}
+        updater={updater}
       />
+      <UpdaterCard updater={updater} />
       {journal ? <Journal onOpen={setSelected} /> : (
         <Universe
           current={current}

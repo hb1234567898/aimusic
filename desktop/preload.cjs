@@ -7,6 +7,16 @@ contextBridge.exposeInMainWorld('orbitDesktop', {
   refreshQQLogin: () => ipcRenderer.invoke('orbit-refresh-qq-login'),
   clearQQLogin: () => ipcRenderer.invoke('orbit-clear-qq-login'),
   setKeepAwake: enabled => ipcRenderer.invoke('orbit-set-keep-awake', Boolean(enabled)),
+  // 远程更新
+  appVersion: () => ipcRenderer.invoke('orbit-app-version'),
+  checkUpdate: () => ipcRenderer.invoke('orbit-check-update'),
+  downloadUpdate: () => ipcRenderer.invoke('orbit-download-update'),
+  installUpdate: () => ipcRenderer.invoke('orbit-install-update'),
+  onUpdateState: callback => {
+    const listener = (_event, state) => callback(state);
+    ipcRenderer.on('orbit-update-state', listener);
+    return () => ipcRenderer.removeListener('orbit-update-state', listener);
+  },
 });
 
 window.addEventListener('DOMContentLoaded', () => {

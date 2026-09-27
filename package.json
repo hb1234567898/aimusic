@@ -1,7 +1,7 @@
 {
   "name": "orbit-music",
   "private": true,
-  "version": "1.0.4",
+  "version": "1.0.5",
   "description": "ORBIT liquid-glass music universe with a local QQ Music bridge",
   "author": "ORBIT Music",
   "type": "module",
@@ -14,9 +14,11 @@
     "build": "vite build",
     "preview": "vite preview --host 127.0.0.1 --port 8765",
     "build:electron:dir": "npm run build && electron-builder --dir",
-    "build:electron": "npm run build && electron-builder"
+    "build:electron": "npm run build && electron-builder",
+    "release": "npm run build && electron-builder --win --publish always"
   },
   "dependencies": {
+    "electron-updater": "^6.8.9",
     "express": "^4.21.2",
     "react": "^19.3.0",
     "react-dom": "^19.3.0"
@@ -33,6 +35,13 @@
     "directories": {
       "output": "release"
     },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "hb1234567898",
+        "repo": "aimusic"
+      }
+    ],
     "files": [
       "dist/**/*",
       "desktop/**/*",
@@ -42,7 +51,10 @@
       "THIRD_PARTY_NOTICES.md"
     ],
     "win": {
-      "target": ["nsis", "portable"],
+      "target": [
+        "nsis",
+        "portable"
+      ],
       "signAndEditExecutable": false
     },
     "nsis": {
