@@ -6,6 +6,7 @@ contextBridge.exposeInMainWorld('orbitDesktop', {
   openQQLogin: () => ipcRenderer.invoke('orbit-open-qq-login'),
   refreshQQLogin: () => ipcRenderer.invoke('orbit-refresh-qq-login'),
   clearQQLogin: () => ipcRenderer.invoke('orbit-clear-qq-login'),
+  setKeepAwake: enabled => ipcRenderer.invoke('orbit-set-keep-awake', Boolean(enabled)),
 });
 
 window.addEventListener('DOMContentLoaded', () => {

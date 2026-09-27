@@ -1,6 +1,6 @@
 // QQ Music login handling is adapted from Sonic Topography for local,
 // personal non-commercial use. See THIRD_PARTY_NOTICES.md.
-import { app, BrowserWindow, ipcMain, session, shell } from 'electron';
+import { app, BrowserWindow, ipcMain, powerSaveBlocker, session, shell } from 'electron';
 import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -13,6 +13,7 @@ const QQ_LOGIN_PARTITION = 'persist:orbit-music-qq-login';
 const QQ_LOGIN_URL = 'https://y.qq.com/n/ryqq/profile';
 let mainWindow = null;
 let qqCookieSyncTimer = null;
+let displaySleepBlockerId = null;
 
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 app.commandLine.appendSwitch('force_high_performance_gpu');
@@ -237,6 +238,17 @@ async function createWindow() {
 
 ipcMain.handle('orbit-open-qq-login', (event) => openQQMusicLoginWindow(BrowserWindow.fromWebContents(event.sender)));
 ipcMain.handle('orbit-refresh-qq-login', () => syncCurrentQQPlaybackCookie());
+ipcMain.handle('orbit-set-keep-awake', (_event, enabled) => {
+  if (enabled) {
+    if (displaySleepBlockerId === null || !powerSaveBlocker.isStarted(displaySleepBlockerId)) {
+      displaySleepBlockerId = powerSaveBlocker.start('prevent-display-sleep');
+    }
+  } else if (displaySleepBlockerId !== null) {
+    if (powerSaveBlocker.isStarted(displaySleepBlockerId)) powerSaveBlocker.stop(displaySleepBlockerId);
+    displaySleepBlockerId = null;
+  }
+  return { active: displaySleepBlockerId !== null && powerSaveBlocker.isStarted(displaySleepBlockerId) };
+});
 ipcMain.handle('orbit-clear-qq-login', async () => {
   await session.fromPartition(QQ_LOGIN_PARTITION).clearStorageData({ storages: ['cookies', 'localstorage', 'indexdb', 'cachestorage'] });
   await fetch(`${appUrl}/api/qq/logout`, { method: 'POST' }).catch(() => {});
@@ -247,5 +259,9 @@ app.whenReady().then(async () => {
   watchQQPlaybackCookies();
   await createWindow();
 });
-app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
+app.on('window-all-closed', () => {
+  if (displaySleepBlockerId !== null && powerSaveBlocker.isStarted(displaySleepBlockerId)) powerSaveBlocker.stop(displaySleepBlockerId);
+  displaySleepBlockerId = null;
+  if (process.platform !== 'darwin') app.quit();
+});
 app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });

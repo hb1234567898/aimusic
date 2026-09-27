@@ -119,6 +119,38 @@ function LiquidArt({ src, alt = '', className = '' }) {
   );
 }
 
+function CardArtistTicker({ artist }) {
+  const containerRef = useRef(null);
+  const textRef = useRef(null);
+  const [scrolling, setScrolling] = useState(false);
+
+  useLayoutEffect(() => {
+    const measure = () => {
+      const container = containerRef.current;
+      const text = textRef.current;
+      if (!container || !text) return;
+      setScrolling(text.scrollWidth > container.clientWidth + 1);
+    };
+    measure();
+    const observer = typeof ResizeObserver === 'function' ? new ResizeObserver(measure) : null;
+    if (containerRef.current) observer?.observe(containerRef.current);
+    window.addEventListener('resize', measure);
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener('resize', measure);
+    };
+  }, [artist]);
+
+  return (
+    <small ref={containerRef} className={scrolling ? 'is-scrolling' : ''} title={artist}>
+      <span className="artist-ticker">
+        <span ref={textRef}>{artist}</span>
+        {scrolling ? <span aria-hidden="true">{artist}</span> : null}
+      </span>
+    </small>
+  );
+}
+
 // 切歌单是下拉列表：头部横排放不下几个歌单名，而且截图里一排 chips 太挤。
 function PlaylistSwitch({ playlists, activePlaylist, onSwitchPlaylist }) {
   const [open, setOpen] = useState(false);
@@ -429,6 +461,7 @@ function Universe({ current, playing, currentTime, duration, onSelect, zoom, bac
     let animationFrame = 0;
     let refocusTimer = 0;
     let wasPlaying = false;
+    let revealCardsUntil = 0;
 
     const focusTrack = id => {
       const card = coordinates.find(item => item.track.id === id);
@@ -1238,7 +1271,8 @@ function Universe({ current, playing, currentTime, duration, onSelect, zoom, bac
         }
         // 播放时当前卡片保持突出，其余卡片只降低不透明度并保留原有景深，
         // 让用户仍能看见完整的歌曲球面分布。
-        if (propsRef.current.playing) alpha = active ? 0.86 : 0.08 + alpha * 0.16;
+        const revealingCards = dragging || performance.now() < revealCardsUntil;
+        if (propsRef.current.playing && !revealingCards) alpha = active ? 0.86 : 0.08 + alpha * 0.16;
         element.style.opacity = String(alpha);
         element.style.visibility = (!active && !propsRef.current.playing && fade <= 0.002) ? 'hidden' : 'visible';
         const brightFloor = gpuBackdrop ? (mobile ? 0.55 : 0.62) : (mobile ? 0.4 : 0.45);
@@ -1298,6 +1332,7 @@ function Universe({ current, playing, currentTime, duration, onSelect, zoom, bac
       velocityX = 0;
       velocityY = 0;
       focusing = false;
+      revealCardsUntil = Infinity;
       // 又上手拖了，取消上一次的「转回当前歌曲」倒计时
       clearTimeout(refocusTimer);
       universe.classList.add('dragging');
@@ -1330,6 +1365,7 @@ function Universe({ current, playing, currentTime, duration, onSelect, zoom, bac
         velocityY = 0;
       }
       universe.classList.remove('dragging');
+      revealCardsUntil = performance.now() + 2200;
       try { captureTarget?.releasePointerCapture(event.pointerId); } catch { /* pointer already released */ }
       captureTarget = null;
       pointerId = null;
@@ -1420,7 +1456,7 @@ function Universe({ current, playing, currentTime, duration, onSelect, zoom, bac
             <LiquidArt src={track.cover} className="card-art" />
             <span className="number">ORBIT · {String(track.id + 1).padStart(2, '0')}</span>
             <span className="card-play"><Icon name="play" /></span>
-            <span className="caption"><strong>{track.title}</strong><small>{track.album}</small></span>
+            <span className="caption"><strong>{track.title}</strong><CardArtistTicker artist={track.artist || '未知歌手'} /></span>
           </button>
         ))}
       </div>
@@ -1455,7 +1491,7 @@ function Journal({ onOpen }) {
   );
 }
 
-function Player({ track, current, playing, preparing, currentTime, duration, random, repeat, liked, volume, muted, outputPref, outputs, outputMenu, beatOffset, onBeatOffset, onOutputToggle, onOutputPick, onPlay, onStep, onSeek, onShuffle, onRepeat, onFavorite, onVolume, onMute, onOpen }) {
+function Player({ track, current, playing, preparing, currentTime, duration, random, repeat, liked, volume, muted, outputPref, outputs, outputMenu, beatOffset, hidden, onHiddenChange, onBeatOffset, onOutputToggle, onOutputPick, onPlay, onStep, onSeek, onShuffle, onRepeat, onFavorite, onVolume, onMute, onOpen }) {
   // duration 未知（metadata 没到 / iOS 对 mp3 常报 Infinity）时进度条必须整体禁用，
   // 千万不能用 100 当 max：断点续播把 currentTime 设到 120s 的话，滑块会顶到最右边。
   const safeDuration = Number.isFinite(duration) && duration > 0 ? duration : 0;
@@ -1470,8 +1506,16 @@ function Player({ track, current, playing, preparing, currentTime, duration, ran
       setScrub(null);
     }
   };
+  if (hidden) {
+    return (
+      <button className="player-reveal glass" onClick={() => onHiddenChange(false)} aria-label="显示播放栏" title="显示播放栏">
+        <span aria-hidden="true">⌃</span><small>{playing ? '播放中' : '播放栏'}</small>
+      </button>
+    );
+  }
   return (
     <footer className="player glass">
+      <button className="player-hide" onClick={() => onHiddenChange(true)} aria-label="隐藏播放栏" title="隐藏播放栏">⌄</button>
       <div className="now">
         <LiquidArt src={track.cover} alt={`${track.album} 专辑封面`} className="now-art" />
         <div className="now-copy">
@@ -1634,6 +1678,7 @@ export default function App() {
   const [beatOffset, setBeatOffset] = useState(readBeatOffset);
   const [outputs, setOutputs] = useState([]);
   const [outputMenu, setOutputMenu] = useState(false);
+  const [playerHidden, setPlayerHidden] = useState(false);
   // ref 必须从恢复出来的歌曲开始；先写 0 会让首屏初始化把续播位置套到第一首歌。
   const currentRef = useRef(current);
   const preparingRef = useRef(false);
@@ -1751,6 +1796,40 @@ export default function App() {
       window.removeEventListener('focus', wake);
     };
   }, []);
+
+  // 播放期间保持屏幕常亮：桌面应用走 Electron 的系统级阻止息屏，
+  // 浏览器和安卓车机走 Screen Wake Lock，并在页面重新可见时自动补领。
+  useEffect(() => {
+    let wakeLock = null;
+    let cancelled = false;
+    const desktopKeepAwake = window.orbitDesktop?.setKeepAwake;
+    if (desktopKeepAwake) {
+      desktopKeepAwake(playing).catch(() => {});
+      return () => { desktopKeepAwake(false).catch(() => {}); };
+    }
+
+    const requestWakeLock = async () => {
+      if (cancelled || !playing || document.visibilityState !== 'visible' || !navigator.wakeLock?.request || wakeLock) return;
+      try {
+        wakeLock = await navigator.wakeLock.request('screen');
+        wakeLock.addEventListener('release', () => { wakeLock = null; }, { once: true });
+      } catch { /* 系统省电模式或内核不支持时保持正常播放 */ }
+    };
+    const onVisibility = () => { if (document.visibilityState === 'visible') requestWakeLock(); };
+    requestWakeLock();
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      cancelled = true;
+      document.removeEventListener('visibilitychange', onVisibility);
+      wakeLock?.release?.().catch(() => {});
+      wakeLock = null;
+    };
+  }, [playing]);
+
+  useEffect(() => {
+    document.body.classList.toggle('player-collapsed', playerHidden);
+    return () => document.body.classList.remove('player-collapsed');
+  }, [playerHidden]);
 
   const openOutputMenu = async () => {
     const nextOpen = !outputMenu;
@@ -2103,6 +2182,11 @@ export default function App() {
         outputs={outputs}
         outputMenu={outputMenu}
         beatOffset={beatOffset}
+        hidden={playerHidden}
+        onHiddenChange={hidden => {
+          setPlayerHidden(hidden);
+          if (hidden) setOutputMenu(false);
+        }}
         onBeatOffset={adjustBeatOffset}
         onOutputToggle={openOutputMenu}
         onOutputPick={chooseOutput}
