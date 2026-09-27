@@ -1,7 +1,7 @@
 {
   "name": "orbit-music",
   "private": true,
-  "version": "1.0.12",
+  "version": "1.0.13",
   "description": "ORBIT liquid-glass music universe with QQ Music and Netease Cloud Music bridges",
   "author": "ORBIT Music",
   "type": "module",

@@ -4,6 +4,7 @@ import { app, BrowserWindow, ipcMain, powerSaveBlocker, session, shell } from 'e
 import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { downloadVerifiedUpdate } from './update-download.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const appRoot = path.resolve(__dirname, '..');
@@ -18,6 +19,9 @@ let qqCookieSyncTimer = null;
 let neteaseCookieSyncTimer = null;
 let displaySleepBlockerId = null;
 let autoUpdater = null;
+let pendingUpdateInfo = null;
+let updateDownloadPromise = null;
+let downloadedInstallerPath = '';
 
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 app.commandLine.appendSwitch('force_high_performance_gpu');
@@ -377,6 +381,34 @@ function emitUpdateState(payload) {
   mainWindow?.webContents?.send('orbit-update-state', payload);
 }
 
+function prefersChinaUpdateMirrors() {
+  const locale = app.getLocale?.() || '';
+  const country = app.getLocaleCountryCode?.() || '';
+  return /^zh(?:-|$)/i.test(locale) || String(country).toUpperCase() === 'CN';
+}
+
+function startVerifiedUpdateDownload(info = pendingUpdateInfo) {
+  if (!info?.version) return Promise.reject(new Error('还没有可下载的更新'));
+  if (downloadedInstallerPath) return Promise.resolve({ path: downloadedInstallerPath, source: 'cache' });
+  if (updateDownloadPromise) return updateDownloadPromise;
+  pendingUpdateInfo = info;
+  emitUpdateState({ phase: 'downloading', percent: 0, version: info.version });
+  updateDownloadPromise = downloadVerifiedUpdate({
+    updateInfo: info,
+    destinationDir: path.join(app.getPath('temp'), 'orbit-music-updates', info.version),
+    preferMirrors: prefersChinaUpdateMirrors(),
+    onProgress: percent => emitUpdateState({ phase: 'downloading', percent, version: info.version }),
+  }).then(result => {
+    downloadedInstallerPath = result.path;
+    emitUpdateState({ phase: 'downloaded', version: info.version, source: result.source });
+    return result;
+  }).catch(error => {
+    emitUpdateState({ phase: 'error', message: error?.message || '更新下载失败', version: info.version });
+    throw error;
+  }).finally(() => { updateDownloadPromise = null; });
+  return updateDownloadPromise;
+}
+
 async function wireUpdater() {
   if (!updaterEnabled) return;
   // 更新器不是播放器启动的硬依赖。曾经出现安装包漏收 electron-updater，
@@ -389,28 +421,25 @@ async function wireUpdater() {
     emitUpdateState({ phase: 'error', message: `自动更新组件不可用：${error?.message || '加载失败'}` });
     return;
   }
-  // 静默更新：每次启动后台查一次，发现新版本直接在后台下载，
-  // UI 只负责把状态画成一个小徽章，不弹窗、不放按钮。
-  autoUpdater.autoDownload = true;
+  // 版本检查仍然使用 GitHub 官方源，确保拿到官方 SHA-512；实际下载由下方的
+  // 多线路下载器完成。中国区域优先镜像并逐字节校验，失败再回退 GitHub。
+  autoUpdater.autoDownload = false;
   // 下载完不趁App退出偷偷装上，等用户点一下徽章再重启，避免抢走控制权。
   autoUpdater.autoInstallOnAppQuit = false;
   autoUpdater.allowDowngrade = false;
 
   autoUpdater.on('checking-for-update', () => emitUpdateState({ phase: 'checking' }));
-  autoUpdater.on('update-available', (info) => emitUpdateState({
-    phase: 'available',
-    version: info?.version || '',
-    releaseNotes: typeof info?.releaseNotes === 'string' ? info.releaseNotes : '',
-  }));
+  autoUpdater.on('update-available', (info) => {
+    pendingUpdateInfo = info;
+    downloadedInstallerPath = '';
+    emitUpdateState({
+      phase: 'available',
+      version: info?.version || '',
+      releaseNotes: typeof info?.releaseNotes === 'string' ? info.releaseNotes : '',
+    });
+    startVerifiedUpdateDownload(info).catch(() => {});
+  });
   autoUpdater.on('update-not-available', (info) => emitUpdateState({ phase: 'idle', version: info?.version || app.getVersion() }));
-  autoUpdater.on('download-progress', (progress) => emitUpdateState({
-    phase: 'downloading',
-    percent: Math.min(100, Math.max(0, Math.round(progress?.percent || 0))),
-  }));
-  autoUpdater.on('update-downloaded', (info) => emitUpdateState({
-    phase: 'downloaded',
-    version: info?.version || '',
-  }));
   autoUpdater.on('error', (error) => emitUpdateState({
     phase: 'error',
     message: error?.message || '检查更新失败',
@@ -429,19 +458,18 @@ ipcMain.handle('orbit-check-update', async () => {
 ipcMain.handle('orbit-download-update', async () => {
   if (!updaterEnabled || !autoUpdater) return { ok: false, reason: updaterEnabled ? 'unavailable' : 'dev' };
   try {
-    await autoUpdater.downloadUpdate();
+    await startVerifiedUpdateDownload();
     return { ok: true };
   } catch (error) {
     return { ok: false, reason: error?.message || 'download-failed' };
   }
 });
-ipcMain.handle('orbit-install-update', () => {
+ipcMain.handle('orbit-install-update', async () => {
   if (!updaterEnabled || !autoUpdater) return { ok: false, reason: updaterEnabled ? 'unavailable' : 'dev' };
-  // 关掉 HTTP 服务再装，否则端口占着，装完重启会起不来。
-  // 安装包自己会拉起新版本。
-  setImmediate(() => {
-    autoUpdater.quitAndInstall(false, true);
-  });
+  if (!downloadedInstallerPath) return { ok: false, reason: 'not-downloaded' };
+  const error = await shell.openPath(downloadedInstallerPath);
+  if (error) return { ok: false, reason: error };
+  setTimeout(() => app.quit(), 900);
   return { ok: true };
 });
 
