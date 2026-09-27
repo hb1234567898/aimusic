@@ -265,9 +265,10 @@ function emitUpdateState(payload) {
 
 function wireUpdater() {
   if (!updaterEnabled) return;
-  // 自动下载关掉：由用户在 UI 里点「下载」再拉，避免后台偷跑流量。
-  // 但每次启动会静默检查一次，有新版只是提示，不打扰。
-  autoUpdater.autoDownload = false;
+  // 静默更新：每次启动后台查一次，发现新版本直接在后台下载，
+  // UI 只负责把状态画成一个小徽章，不弹窗、不放按钮。
+  autoUpdater.autoDownload = true;
+  // 下载完不趁App退出偷偷装上，等用户点一下徽章再重启，避免抢走控制权。
   autoUpdater.autoInstallOnAppQuit = false;
   autoUpdater.allowDowngrade = false;
 

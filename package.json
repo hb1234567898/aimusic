@@ -1,7 +1,7 @@
 {
   "name": "orbit-music",
   "private": true,
-  "version": "1.0.6",
+  "version": "1.0.7",
   "description": "ORBIT liquid-glass music universe with a local QQ Music bridge",
   "author": "ORBIT Music",
   "type": "module",

@@ -14,20 +14,16 @@ header{height:calc(100px + var(--safe-top));padding:var(--safe-top) 3.3vw 0;disp
 .brand{display:flex;align-items:center;gap:10px;font-size:27px;font-weight:700;letter-spacing:3px;color:white;text-decoration:none}
 .brand svg{width:40px;height:40px;stroke-width:1.5}
 .version-chip{font-size:10px;color:#8e8e98;letter-spacing:.6px;padding:5px 8px;border-radius:9px;white-space:nowrap}.version-chip:hover{color:#fff;background:#ffffff12}
-/* 更新卡片放右上角：底部被播放条、toast、宇宙页脚占满了，没有干净的位置 */
-.updater-card{position:fixed;top:calc(104px + var(--safe-top));right:3.2%;z-index:120;width:min(304px,86vw);padding:15px 16px;border-radius:17px;background:#1a1b1fe8;box-shadow:0 18px 44px #000a;display:flex;flex-direction:column;gap:11px}
-.updater-head{display:flex;align-items:baseline;gap:9px}
-.updater-head strong{font-size:13px;font-weight:500}
-.updater-head span{font-size:9px;color:#8e8e98;letter-spacing:.8px}
-.updater-notes{margin:0;font-size:10px;line-height:1.65;color:#9d9da7;white-space:pre-line;max-height:88px;overflow:auto}
-.updater-bar{height:3px;border-radius:2px;background:#ffffff14;overflow:hidden}
-.updater-bar>i{display:block;height:100%;border-radius:2px;background:linear-gradient(90deg,#d8d8de,#fff);transition:width .25s ease}
-.updater-actions{display:flex;align-items:center;gap:8px}
-.updater-actions button{padding:9px 15px;border-radius:11px;background:#ececef;color:#18191d;font-size:11px;font-weight:600}
-.updater-actions button:hover{background:#fff}
-.updater-actions button:disabled{opacity:.45;cursor:wait}
-.updater-later{background:transparent!important;color:#9d9da7!important;font-weight:400!important}
-.updater-later:hover{color:#fff!important;background:#ffffff12!important}
+/* 更新徽章放右上角一个圆形小点：底部被播放条、toast、宇宙页脚占满了，别处放不下。
+   平时完全不渲染，只有真正在检查/下载/就绪时才出现，结束自己淡出消失。 */
+.update-badge{position:fixed;top:calc(104px + var(--safe-top));right:3.2%;z-index:120;width:38px;height:38px;display:grid;place-items:center;border-radius:50%;background:#1a1b1fe8;box-shadow:0 10px 26px #0008;color:#fff;transition:opacity .3s ease,transform .3s ease;animation:update-pop .3s ease both}
+.update-badge[data-leaving="true"]{opacity:0;transform:scale(.86);animation:none}
+.update-badge.is-ready{cursor:pointer;background:#fff;color:#18191d}
+.update-badge.is-ready:hover{transform:scale(1.07)}
+.update-spin{animation:update-spin .85s linear infinite}
+.update-ring{transition:stroke-dashoffset .3s ease}
+@keyframes update-spin{to{transform:rotate(360deg)}}
+@keyframes update-pop{from{opacity:0;transform:scale(.8)}to{opacity:1;transform:scale(1)}}
 .brand-note{font-size:12px;color:#929299;letter-spacing:2px;border-left:1px solid #47474a;margin-left:9px;padding-left:18px;font-weight:400}
 /* 右侧一组：切歌单（下拉列表）+ QQ 桥。nav 是绝对定位居中的，这一组必须靠右排，否则会和它叠在一起 */
 .header-right{display:flex;align-items:center;gap:14px;margin-left:auto;min-width:0}

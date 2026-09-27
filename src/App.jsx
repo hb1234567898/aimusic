@@ -203,13 +203,114 @@ function PlaylistSwitch({ playlists, activePlaylist, onSwitchPlaylist }) {
   );
 }
 
-const UPDATE_TEXT = {
+// 只在鼠标悬停时露出具体状态，平时界面上就一个小图标，尽量不打扰。
+const UPDATE_HINT = {
   checking: '正在检查更新…',
-  available: '有新版本可用',
+  available: '正在准备更新…',
   downloading: '正在下载更新',
-  downloaded: '更新已下载',
-  error: '更新失败',
+  downloaded: '更新已就绪，点击安装',
 };
+
+// 转圈：一个缺口圆环，整枚 SVG 匀速旋转，用来表达「在查」
+function UpdateSpin() {
+  return (
+    <svg className="update-spin" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+      <circle cx="12" cy="12" r="9" fill="none" stroke="#ffffff2e" strokeWidth="2.4" />
+      <path d="M21 12a9 9 0 0 0-9-9" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+// 下载：外圈是环形进度，中心一支向下箭头
+function UpdateDownload({ percent }) {
+  const radius = 10.4;
+  const circumference = 2 * Math.PI * radius;
+  const offset = circumference * (1 - percent / 100);
+  return (
+    <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+      <circle cx="12" cy="12" r={radius} fill="none" stroke="#ffffff24" strokeWidth="1.5" />
+      <circle
+        className="update-ring"
+        cx="12" cy="12" r={radius} fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"
+        strokeDasharray={circumference} strokeDashoffset={offset} transform="rotate(-90 12 12)"
+      />
+      <path d="M12 7v7.2" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
+      <path d="m9 11.4 3 3 3-3" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+// 就绪：一枚勾，点它即重启安装
+function UpdateReady() {
+  return (
+    <svg viewBox="0 0 24 24" width="17" height="17" aria-hidden="true">
+      <path d="m7.6 12.6 3.1 3.1 5.7-6.1" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+// 更新状态徽章：检查/下载时转圈或走环形进度，下载好了变成可点击的勾，
+// 没有新版本（idle）或出错（error）则完全不渲染 —— phase 一变就淡出自动消失。
+function UpdateBadge({ updater }) {
+  const { state, supported, install } = updater;
+  const [render, setRender] = useState(false);
+  const [leaving, setLeaving] = useState(false);
+  const phase = state?.phase;
+  const percent = Math.min(100, Math.max(0, Number(state?.percent || 0)));
+
+  // 快照最后一个有意义的状态。淡出的那 400 多毫秒里 state 已经回到 idle/null 了，
+  // 若直接读 state，图标会全部失配，用户就看到一个空圆圈在原地 fade out。
+  const [snap, setSnap] = useState(null);
+
+  // 「检查中」只在拖得比较久时才露面：网络快的话一次检查几百毫秒就结束了，
+  // 若每次启动都闪一下转圈再消失，那本身也是一种打扰。
+  const pending = phase === 'checking' || phase === 'available';
+  const [pendingVisible, setPendingVisible] = useState(false);
+  useEffect(() => {
+    if (!pending) { setPendingVisible(false); return undefined; }
+    const timer = setTimeout(() => setPendingVisible(true), 700);
+    return () => clearTimeout(timer);
+  }, [pending]);
+
+  // 一旦真的开始下载或已就绪就立刻显示，不用再等那 700ms
+  const meaningful = Boolean(supported && phase && phase !== 'idle' && phase !== 'error');
+  const active = meaningful && (phase === 'downloading' || phase === 'downloaded' || pendingVisible);
+
+  useEffect(() => {
+    if (active) {
+      setLeaving(false);
+      setRender(true);
+      setSnap({ phase, percent });
+      return undefined;
+    }
+    if (!render) return undefined;
+    setLeaving(true);
+    const timer = setTimeout(() => { setRender(false); setLeaving(false); }, 420);
+    return () => clearTimeout(timer);
+    // 刻意不依赖 render：否则淡出计时器会自我重启
+  }, [active, phase, percent]);
+
+  if (!supported || !render || !snap) return null;
+
+  const shown = snap.phase;
+  const done = shown === 'downloaded';
+  const Tag = done ? 'button' : 'div';
+
+  return (
+    <Tag
+      className={`update-badge${done ? ' is-ready' : ''}`}
+      data-leaving={leaving ? 'true' : undefined}
+      role="status"
+      aria-live="polite"
+      title={UPDATE_HINT[shown] || ''}
+      onClick={done ? () => install().catch(() => {}) : undefined}
+    >
+      {shown === 'downloading' ? <UpdateDownload percent={snap.percent} /> : null}
+      {shown === 'downloaded' ? <UpdateReady /> : null}
+      {shown === 'checking' || shown === 'available' ? <UpdateSpin /> : null}
+    </Tag>
+  );
+}
 
 // 桌面端才有的能力：主进程在启动时会静默检查一次，结果通过 IPC 推过来。
 // 网页版拿不到 orbitDesktop.checkUpdate，整块 UI 直接不渲染。
@@ -233,38 +334,6 @@ function useUpdater() {
   const dismiss = useCallback(() => setState(null), []);
 
   return { supported, state, version, check, download, install, dismiss };
-}
-
-function UpdaterCard({ updater }) {
-  const { state, supported, download, install, dismiss } = updater;
-  const [busy, setBusy] = useState(false);
-  if (!supported) return null;
-  const phase = state?.phase;
-  if (!phase || phase === 'idle') return null;
-  const percent = Math.min(100, Math.max(0, Number(state.percent || 0)));
-  const run = async fn => { setBusy(true); try { await fn(); } catch { /* 主进程已把错误推回来 */ } setBusy(false); };
-
-  return (
-    <aside className="updater-card glass" role="status" aria-live="polite">
-      <div className="updater-head">
-        <strong>{UPDATE_TEXT[phase] || '检查更新'}</strong>
-        {state.version ? <span>{state.version}</span> : null}
-      </div>
-      {phase === 'available' && state.releaseNotes
-        ? <p className="updater-notes">{String(state.releaseNotes).slice(0, 140)}</p>
-        : null}
-      {phase === 'downloading'
-        ? <div className="updater-bar" role="progressbar" aria-valuenow={percent} aria-valuemin={0} aria-valuemax={100}><i style={{ width: `${percent}%` }} /></div>
-        : null}
-      {phase === 'error' ? <p className="updater-notes">{state.message || '暂时连不上更新服务器'}</p> : null}
-      <div className="updater-actions">
-        {phase === 'available' ? <button onClick={() => run(download)} disabled={busy}>下载更新</button> : null}
-        {phase === 'downloaded' ? <button onClick={() => run(install)} disabled={busy}>重启安装</button> : null}
-        {phase === 'error' ? <button onClick={() => run(updater.check)} disabled={busy}>重试</button> : null}
-        {phase === 'checking' ? null : <button className="updater-later" onClick={dismiss} disabled={busy}>稍后</button>}
-      </div>
-    </aside>
-  );
 }
 
 function Header({ journal, onChangeView, onOpenBridge, qqCount, playlists, activePlaylist, onSwitchPlaylist, updater }) {
@@ -2253,7 +2322,7 @@ export default function App() {
         onSwitchPlaylist={handleSwitchPlaylist}
         updater={updater}
       />
-      <UpdaterCard updater={updater} />
+      <UpdateBadge updater={updater} />
       {journal ? <Journal onOpen={setSelected} /> : (
         <Universe
           current={current}
