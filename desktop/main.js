@@ -1,11 +1,6 @@
 // QQ Music and Netease Cloud Music login handling is adapted from Sonic Topography for local,
 // personal non-commercial use. See THIRD_PARTY_NOTICES.md.
 import { app, BrowserWindow, ipcMain, powerSaveBlocker, session, shell } from 'electron';
-// electron-updater 是 CJS 包，autoUpdater 用 Object.defineProperty 的 getter 挂出来，
-// 静态扫描认不了这个命名导出。直接 `import { autoUpdater } from 'electron-updater'`
-// 会在加载期就抛 SyntaxError，主进程起不来、整个应用打不开。必须 default import 再解构。
-import electronUpdater from 'electron-updater';
-const { autoUpdater } = electronUpdater;
 import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -22,6 +17,7 @@ let mainWindow = null;
 let qqCookieSyncTimer = null;
 let neteaseCookieSyncTimer = null;
 let displaySleepBlockerId = null;
+let autoUpdater = null;
 
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 app.commandLine.appendSwitch('force_high_performance_gpu');
@@ -381,8 +377,18 @@ function emitUpdateState(payload) {
   mainWindow?.webContents?.send('orbit-update-state', payload);
 }
 
-function wireUpdater() {
+async function wireUpdater() {
   if (!updaterEnabled) return;
+  // 更新器不是播放器启动的硬依赖。曾经出现安装包漏收 electron-updater，
+  // 顶层静态 import 会让整个主进程在窗口出现前直接崩溃。改成运行时加载：
+  // 正常制品仍有完整 OTA；极端情况下只关闭更新，不影响听歌和登录。
+  try {
+    const updaterModule = await import('electron-updater');
+    autoUpdater = (updaterModule.default || updaterModule).autoUpdater;
+  } catch (error) {
+    emitUpdateState({ phase: 'error', message: `自动更新组件不可用：${error?.message || '加载失败'}` });
+    return;
+  }
   // 静默更新：每次启动后台查一次，发现新版本直接在后台下载，
   // UI 只负责把状态画成一个小徽章，不弹窗、不放按钮。
   autoUpdater.autoDownload = true;
@@ -413,7 +419,7 @@ function wireUpdater() {
 
 ipcMain.handle('orbit-app-version', () => ({ version: app.getVersion(), updaterEnabled }));
 ipcMain.handle('orbit-check-update', async () => {
-  if (!updaterEnabled) return { ok: false, reason: 'dev' };
+  if (!updaterEnabled || !autoUpdater) return { ok: false, reason: updaterEnabled ? 'unavailable' : 'dev' };
   try {
     return await autoUpdater.checkForUpdates();
   } catch (error) {
@@ -421,7 +427,7 @@ ipcMain.handle('orbit-check-update', async () => {
   }
 });
 ipcMain.handle('orbit-download-update', async () => {
-  if (!updaterEnabled) return { ok: false, reason: 'dev' };
+  if (!updaterEnabled || !autoUpdater) return { ok: false, reason: updaterEnabled ? 'unavailable' : 'dev' };
   try {
     await autoUpdater.downloadUpdate();
     return { ok: true };
@@ -430,7 +436,7 @@ ipcMain.handle('orbit-download-update', async () => {
   }
 });
 ipcMain.handle('orbit-install-update', () => {
-  if (!updaterEnabled) return { ok: false, reason: 'dev' };
+  if (!updaterEnabled || !autoUpdater) return { ok: false, reason: updaterEnabled ? 'unavailable' : 'dev' };
   // 关掉 HTTP 服务再装，否则端口占着，装完重启会起不来。
   // 安装包自己会拉起新版本。
   setImmediate(() => {
@@ -456,8 +462,8 @@ app.whenReady().then(async () => {
   watchNeteaseCookies();
   await createWindow();
   // 窗口就绪后再挂 updater，之前发的事件没有接收方会丢
-  wireUpdater();
-  if (updaterEnabled) autoUpdater.checkForUpdates().catch(() => {});
+  await wireUpdater();
+  if (updaterEnabled && autoUpdater) autoUpdater.checkForUpdates().catch(() => {});
 });
 app.on('window-all-closed', () => {
   if (displaySleepBlockerId !== null && powerSaveBlocker.isStarted(displaySleepBlockerId)) powerSaveBlocker.stop(displaySleepBlockerId);
