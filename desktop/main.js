@@ -1,7 +1,11 @@
 // QQ Music login handling is adapted from Sonic Topography for local,
 // personal non-commercial use. See THIRD_PARTY_NOTICES.md.
 import { app, BrowserWindow, ipcMain, powerSaveBlocker, session, shell } from 'electron';
-import { autoUpdater } from 'electron-updater';
+// electron-updater 是 CJS 包，autoUpdater 用 Object.defineProperty 的 getter 挂出来，
+// 静态扫描认不了这个命名导出。直接 `import { autoUpdater } from 'electron-updater'`
+// 会在加载期就抛 SyntaxError，主进程起不来、整个应用打不开。必须 default import 再解构。
+import electronUpdater from 'electron-updater';
+const { autoUpdater } = electronUpdater;
 import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
