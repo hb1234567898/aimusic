@@ -443,8 +443,6 @@ export function createTerrainGL(canvas, options = {}) {
   const mobile = !!options.mobile;
   // 移动端 GPU 弱，网格砍到 110（12100 个方块），桌面保持对方的 155（24025 个）
   const gridSize = options.gridSize || (mobile ? 110 : 155);
-  const spacing = TERRAIN_SIZE / gridSize;
-  const boxWidth = spacing * (0.9 / 1.05);
 
   const gl = canvas.getContext('webgl2', {
     alpha: true,
@@ -506,9 +504,6 @@ export function createTerrainGL(canvas, options = {}) {
   gl.uniform3fv(U.uWarmEdge, theme.warmEdge);
   gl.uniform3fv(U.uRippleColor, theme.ripple);
   gl.uniform1f(U.uGlowIntensity, theme.glow);
-  gl.uniform1f(U.uGridSize, gridSize);
-  gl.uniform1f(U.uSpacing, spacing);
-  gl.uniform1f(U.uBoxWidth, boxWidth);
   // 0 = 地面贴底；需要整体浮动效果时可以给 options.heightOffset 传正值
   gl.uniform1f(U.uYOffset, options.heightOffset ?? 0);
   if (U.uSpectralCentroid) gl.uniform1f(U.uSpectralCentroid, 0.2);
@@ -533,7 +528,22 @@ export function createTerrainGL(canvas, options = {}) {
   let kick = 0;
   let prevBrightness = 0;
   let aspect = 0;   // 0 而不是 1：保证首帧 resize 一定会算出投影矩阵（正方形视口 aspect 正好是 1 时也不会漏）
+  let viewportWidth = 0;
+  let viewportHeight = 0;
   let pendingTime = 0;
+  let activeGridSize = 0;
+
+  // 拖动卡片时仍然逐帧绘制地形，只把实例网格从 155² 临时降到约 112²。
+  // 整体世界尺寸不变，因此不会缩成一块；GPU 顶点和片元负载接近减半。
+  function configureGrid(nextGridSize) {
+    if (activeGridSize === nextGridSize) return;
+    activeGridSize = nextGridSize;
+    const activeSpacing = TERRAIN_SIZE / activeGridSize;
+    gl.uniform1f(U.uGridSize, activeGridSize);
+    gl.uniform1f(U.uSpacing, activeSpacing);
+    gl.uniform1f(U.uBoxWidth, activeSpacing * (0.9 / 1.05));
+  }
+  configureGrid(gridSize);
 
   gl.enable(gl.DEPTH_TEST);
   gl.depthFunc(gl.LEQUAL);
@@ -565,12 +575,20 @@ export function createTerrainGL(canvas, options = {}) {
       perspective(projection, 45 * Math.PI / 180, aspect, 0.1, 2000);
       gl.uniformMatrix4fv(U.uProjection, false, projection);
     }
-    gl.viewport(0, 0, w, h);
+    if (w !== viewportWidth || h !== viewportHeight) {
+      viewportWidth = w;
+      viewportHeight = h;
+      gl.viewport(0, 0, w, h);
+    }
   }
 
-  // frame 数据：{ time, bins, sampleRate, energy, kickEnvelope, onset, onsetHigh, playing }
+  // frame 数据：{ time, bins, sampleRate, energy, kickEnvelope, onset, onsetHigh, playing, interacting }
   function frame(input) {
     pendingTime = input.time;
+    const interactionGridSize = input.interacting && !mobile
+      ? Math.max(96, Math.round(gridSize * 0.72))
+      : gridSize;
+    configureGrid(interactionGridSize);
     const bins = input.bins;
     const binCount = bins ? bins.length : 0;
     const binHz = (input.sampleRate || 44100) / (binCount * 2 || 1024);
@@ -675,7 +693,7 @@ export function createTerrainGL(canvas, options = {}) {
     gl.uniform2fv(U.uRippleMeta, rippleMeta);
 
     gl.bindVertexArray(vao);
-    gl.drawElementsInstanced(gl.TRIANGLES, box.indices.length, gl.UNSIGNED_SHORT, 0, gridSize * gridSize);
+    gl.drawElementsInstanced(gl.TRIANGLES, box.indices.length, gl.UNSIGNED_SHORT, 0, activeGridSize * activeGridSize);
     gl.bindVertexArray(null);
   }
 

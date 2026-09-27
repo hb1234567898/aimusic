@@ -458,11 +458,20 @@ function Universe({ current, playing, currentTime, duration, onSelect, zoom, bac
     let focusing = false;
     let focusedTrack = -1;
     let lastFrame = 0;
-    let lastBackdropFrame = 0;
     let animationFrame = 0;
     let refocusTimer = 0;
     let wasPlaying = false;
     let revealCardsUntil = 0;
+    let viewportWidth = Math.max(1, universe.clientWidth);
+    let viewportHeight = Math.max(1, universe.clientHeight);
+    const cardFrameCache = [];
+    const resizeObserver = new ResizeObserver(entries => {
+      const rect = entries[0]?.contentRect;
+      if (!rect) return;
+      viewportWidth = Math.max(1, rect.width);
+      viewportHeight = Math.max(1, rect.height);
+    });
+    resizeObserver.observe(universe);
 
     const focusTrack = id => {
       const card = coordinates.find(item => item.track.id === id);
@@ -1105,20 +1114,11 @@ function Universe({ current, playing, currentTime, duration, onSelect, zoom, bac
     };
 
     const drawSoundfield = (timestamp, dtSeconds) => {
-      const width = universe.clientWidth;
-      const height = universe.clientHeight;
+      const width = viewportWidth;
+      const height = viewportHeight;
       // 手机 GPU 扛不住 1.5 倍像素，掉到 20~30fps 时每帧间隔变大，
       // 节拍采样变稀、画面看着就「慢半拍」。移动端把像素量压下来换帧率。
       const dpr = Math.min(devicePixelRatio || 1, width < 600 ? 1.25 : 1.5);
-      const pixelWidth = Math.round(width * dpr);
-      const pixelHeight = Math.round(height * dpr);
-      if (canvas.width !== pixelWidth || canvas.height !== pixelHeight) {
-        canvas.width = pixelWidth;
-        canvas.height = pixelHeight;
-      }
-      context.setTransform(dpr, 0, 0, dpr, 0, 0);
-      context.clearRect(0, 0, width, height);
-      context.fillStyle = '#fff';
       const time = timestamp * 0.001;
       const mobile = width < 600;
       sampleFine();
@@ -1164,7 +1164,10 @@ function Universe({ current, playing, currentTime, duration, onSelect, zoom, bac
       const gpuActive = gpuMode && !!glTerrainRef.current;
       if (gpuActive) {
         const analysis = analysisRef.current;
-        glTerrainRef.current.resize(width, height, dpr);
+        // 地形继续逐帧律动；交互时降低 WebGL 内部像素密度与实例网格，
+        // 把合成预算优先留给卡片层。频谱和坐标仍由 CPU 做轻量计算。
+        const terrainDpr = dragging ? Math.min(dpr, 1) : dpr;
+        glTerrainRef.current.resize(width, height, terrainDpr);
         glTerrainRef.current.frame({
           time,
           bins: analysis.fineBins,
@@ -1174,11 +1177,26 @@ function Universe({ current, playing, currentTime, duration, onSelect, zoom, bac
           onset,
           onsetHigh,
           playing: propsRef.current.playing,
-          dt: dtSeconds
+          dt: dtSeconds,
+          interacting: dragging
         });
-        context.globalAlpha = 1;
+        // GPU 模式无需再逐帧清空另一张全屏 2D 画布。
+        if (canvas.width !== 1 || canvas.height !== 1) {
+          canvas.width = 1;
+          canvas.height = 1;
+        }
         return;
       }
+
+      const pixelWidth = Math.round(width * dpr);
+      const pixelHeight = Math.round(height * dpr);
+      if (canvas.width !== pixelWidth || canvas.height !== pixelHeight) {
+        canvas.width = pixelWidth;
+        canvas.height = pixelHeight;
+      }
+      context.setTransform(dpr, 0, 0, dpr, 0, 0);
+      context.clearRect(0, 0, width, height);
+      context.fillStyle = '#fff';
       // WebGL2 不可用时退回轻量点阵；不在移动端重复绘制重型 Canvas 地形。
       const drawMode = propsRef.current.backdropMode === 4 ? 0 : propsRef.current.backdropMode;
 
@@ -1230,30 +1248,40 @@ function Universe({ current, playing, currentTime, duration, onSelect, zoom, bac
     };
 
     const drawSphere = () => {
-      const width = innerWidth;
-      const height = universe.clientHeight;
+      const width = viewportWidth;
+      const height = viewportHeight;
       const mobile = width < 600;
+      const currentTrack = propsRef.current.current;
+      const isPlaying = propsRef.current.playing;
+      const revealingCards = dragging || performance.now() < revealCardsUntil;
+      const gpuBackdrop = propsRef.current.backdropMode === 4 && !mobile;
       // 移动端屏幕窄，不能沿用桌面的下限，否则卡片会被推出可视区
       const radiusX = Math.max(width * 0.3, mobile ? 140 : 300) * propsRef.current.zoom;
       const radiusY = Math.max((height - 130) * (mobile ? 0.3 : 0.4), mobile ? 140 : 200) * propsRef.current.zoom;
       coordinates.forEach((card, index) => {
         const element = cardRefs.current[index];
         if (!element) return;
+        const cache = cardFrameCache[index] || (cardFrameCache[index] = {});
+        const setStyle = (key, value) => {
+          if (cache[key] === value) return;
+          cache[key] = value;
+          element.style[key] = value;
+        };
         const angle = card.lon + rotation;
         const x = Math.cos(card.lat) * Math.sin(angle);
         const z = Math.cos(card.lat) * Math.cos(angle);
         const y = Math.sin(card.lat);
         const projectedY = y * Math.cos(tilt) - z * Math.sin(tilt);
         const depth = y * Math.sin(tilt) + z * Math.cos(tilt);
-        const active = card.track.id === propsRef.current.current && propsRef.current.playing;
+        const active = card.track.id === currentTrack && isPlaying;
         // 正在播的那张卡片跟着节拍一起呼吸
         const scale = (0.36 + (depth + 1) * 0.31) * (active ? 1.05 + beatPulse * 0.045 : 1);
-        element.style.transform = `translate3d(-50%,-50%,0) translate3d(${x * radiusX}px,${projectedY * radiusY + (mobile ? 45 : 10)}px,0) scale(${scale}) rotateY(${x * -16}deg) rotateZ(${x * projectedY * 5}deg)`;
-        if (active) {
-          element.style.boxShadow = `0 12px 35px #0008, 0 0 0 2px #ffffff3d, 0 0 ${(16 + beatPulse * 34).toFixed(1)}px rgba(255,255,255,${(0.06 + beatPulse * 0.2).toFixed(3)})`;
+        setStyle('transform', `translate3d(-50%,-50%,0) translate3d(${(x * radiusX).toFixed(2)}px,${(projectedY * radiusY + (mobile ? 45 : 10)).toFixed(2)}px,0) scale(${scale.toFixed(4)}) rotateY(${(x * -16).toFixed(2)}deg) rotateZ(${(x * projectedY * 5).toFixed(2)}deg)`);
+        if (active && !dragging) {
+          setStyle('boxShadow', `0 12px 35px #0008, 0 0 0 2px #ffffff3d, 0 0 ${(16 + beatPulse * 34).toFixed(1)}px rgba(255,255,255,${(0.06 + beatPulse * 0.2).toFixed(3)})`);
           element.dataset.glow = '1';
         } else if (element.dataset.glow) {
-          element.style.boxShadow = '';
+          setStyle('boxShadow', '');
           delete element.dataset.glow;
         }
         // 背面卡片直接淡到不可见，避免在正面卡片后面堆成一列。
@@ -1262,7 +1290,6 @@ function Universe({ current, playing, currentTime, duration, onSelect, zoom, bac
         const fade = Math.max(0, Math.min(1, (depth + 0.5) / 1.5));
         // GPU 地形模式的背景又亮又有纹理，原本 0.05 起步的透明度会让其他卡片几乎看不见，
         // 所以这条分支里整体抬高下限、放缓衰减；其余模式维持原来的景深淡出。
-        const gpuBackdrop = propsRef.current.backdropMode === 4 && !mobile;
         let alpha;
         if (gpuBackdrop) {
           const floor = mobile ? 0.3 : 0.38;
@@ -1272,16 +1299,19 @@ function Universe({ current, playing, currentTime, duration, onSelect, zoom, bac
         }
         // 播放时当前卡片保持突出，其余卡片只降低不透明度并保留原有景深，
         // 让用户仍能看见完整的歌曲球面分布。
-        const revealingCards = dragging || performance.now() < revealCardsUntil;
-        if (propsRef.current.playing && !revealingCards) alpha = active ? 0.86 : 0.08 + alpha * 0.16;
-        element.style.opacity = String(alpha);
-        element.style.visibility = (!active && !propsRef.current.playing && fade <= 0.002) ? 'hidden' : 'visible';
+        if (isPlaying && !revealingCards) alpha = active ? 0.86 : 0.08 + alpha * 0.16;
+        setStyle('opacity', alpha.toFixed(3));
+        setStyle('visibility', (!active && !isPlaying && fade <= 0.002) ? 'hidden' : 'visible');
         const brightFloor = gpuBackdrop ? (mobile ? 0.55 : 0.62) : (mobile ? 0.4 : 0.45);
-        element.style.filter = `brightness(${(brightFloor + (depth + 1) * (mobile ? 0.25 : 0.3)).toFixed(2)})`;
-        element.style.zIndex = String(active ? 90 : Math.round((depth + 1) * 30) + 1);
-        const interactive = propsRef.current.playing ? active : depth >= -0.3;
-        element.style.pointerEvents = interactive ? 'auto' : 'none';
-        element.tabIndex = interactive ? 0 : -1;
+        setStyle('filter', dragging ? '' : `brightness(${(brightFloor + (depth + 1) * (mobile ? 0.25 : 0.3)).toFixed(2)})`);
+        setStyle('zIndex', String(active ? 90 : Math.round((depth + 1) * 30) + 1));
+        const interactive = isPlaying ? active : depth >= -0.3;
+        setStyle('pointerEvents', interactive ? 'auto' : 'none');
+        const tabIndex = interactive ? 0 : -1;
+        if (cache.tabIndex !== tabIndex) {
+          cache.tabIndex = tabIndex;
+          element.tabIndex = tabIndex;
+        }
       });
     };
 
@@ -1317,14 +1347,8 @@ function Universe({ current, playing, currentTime, duration, onSelect, zoom, bac
           velocityY *= friction;
         }
       }
-      // 拖动时把主线程和 GPU 优先留给卡片球面。背景律动降到约 20fps，
-      // 卡片本身仍按屏幕刷新率更新；松手后下一帧立即恢复完整律动。
-      const backdropInterval = dragging ? 48 : 0;
-      const backdropElapsed = timestamp - lastBackdropFrame;
-      if (!backdropInterval || backdropElapsed >= backdropInterval || !lastBackdropFrame) {
-        drawSoundfield(timestamp, Math.min(backdropElapsed || dt, 80) / 1000);
-        lastBackdropFrame = timestamp;
-      }
+      // 卡片与地形都保持逐帧更新；交互期的 GPU 预算由地形内部动态降级承担。
+      drawSoundfield(timestamp, dt / 1000);
       drawSphere();
       animationFrame = requestAnimationFrame(animate);
     };
@@ -1416,6 +1440,7 @@ function Universe({ current, playing, currentTime, duration, onSelect, zoom, bac
     return () => {
       cancelAnimationFrame(animationFrame);
       clearTimeout(refocusTimer);
+      resizeObserver.disconnect();
       // 离开宇宙视图时把节拍值归零，免得停在某一帧的亮度上
       document.getElementById('lyrics-panel')?.style.setProperty('--beat', '0');
       playerElement?.style.setProperty('--beat', '0');
