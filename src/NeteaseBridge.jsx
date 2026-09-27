@@ -151,7 +151,7 @@ export default function NeteaseBridge({ open, onClose, onImport, onClear, import
             </>}
           </div>
         </div>
-        <div className="bridge-foot"><span>最多保留 {MAX_NETEASE_IMPORTS} 首 · 不保存账号密码</span><span>当前已导入 {importedCount} 首</span>{importedCount > 0 && <button className="bridge-clear" onClick={onClear}>清空网易云曲库</button>}</div>
+        <div className="bridge-foot"><span>每个歌单最多 {MAX_NETEASE_IMPORTS} 首 · 不保存账号密码</span><span>本机歌单共 {importedCount} 首</span>{importedCount > 0 && <button className="bridge-clear" onClick={onClear}>清空网易云曲库</button>}</div>
         {error && <div className="bridge-error">{error}</div>}
       </section>
     </div>

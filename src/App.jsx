@@ -4,11 +4,14 @@ import { ensureLrc, prefetchLrc, stripTitleEcho, waitForLrc } from './lyrics.js'
 import QQBridge from './QQBridge.jsx';
 import NeteaseBridge from './NeteaseBridge.jsx';
 import {
-  clearQQTracks, hydrateQQTracks, importQQPlaylist, listQQPlaylists,
+  clearQQTracks, importQQPlaylist, listQQPlaylists,
   getActivePlaylistId, removeQQPlaylist, switchQQPlaylist,
   QQ_QUALITY_KEY, QQ_QUALITY_OPTIONS, readQQQuality,
 } from './qqLibrary.js';
-import { clearNeteaseTracks, hydrateNeteaseTracks, importNeteaseTracks } from './neteaseLibrary.js';
+import {
+  clearNeteaseTracks, getActiveNeteasePlaylistId, importNeteaseTracks,
+  listNeteasePlaylists, switchNeteasePlaylist,
+} from './neteaseLibrary.js';
 import { BeatEngine } from './beatEngine.js';
 import { OUTPUT_MODES, applySink, clearPlaybackMemory, listOutputs, readBeatOffset, readLastTrack, readOutputPref, requestDeviceLabels, resumeAt, saveBeatOffset, saveLastTrack, saveOutputPref, saveProgress } from './audioOut.js';
 import { createTerrainGL } from './terrainGL.js';
@@ -16,8 +19,35 @@ import { createTerrainGL } from './terrainGL.js';
 const IS_DESKTOP_APP = Boolean(window.orbitDesktop?.isDesktop)
   || (import.meta.env.DEV && new URLSearchParams(location.search).has('desktop-preview'));
 if (IS_DESKTOP_APP) tracks.splice(0, tracks.length);
-hydrateQQTracks(tracks);
-hydrateNeteaseTracks(tracks);
+const ACTIVE_LIBRARY_KEY = 'orbit.activePlaylist.v1';
+const importedPlaylistKey = (provider, id) => (id ? `${provider}:${id}` : null);
+const removeImportedTracks = library => {
+  for (let index = library.length - 1; index >= 0; index -= 1) {
+    if (library[index]?.provider === 'qq' || library[index]?.provider === 'netease') library.splice(index, 1);
+  }
+  library.forEach((track, index) => { track.id = index; });
+};
+
+// QQ 与网易云只能有一个歌单处于播放状态。旧版分别 hydrate 两个来源，正是
+// 造成 30 + 30 叠成 60 张卡片的根因。这里先迁移存储，再只装载一个活动歌单。
+const initialQQPlaylists = listQQPlaylists();
+const initialNeteasePlaylists = listNeteasePlaylists();
+let initialActiveLibrary = null;
+try { initialActiveLibrary = localStorage.getItem(ACTIVE_LIBRARY_KEY); } catch { /* ignore */ }
+const [initialProvider, initialRawId] = String(initialActiveLibrary || '').split(':');
+const validInitial = initialProvider === 'qq'
+  ? initialQQPlaylists.some(item => item.id === initialRawId)
+  : initialProvider === 'netease' && initialNeteasePlaylists.some(item => item.id === initialRawId);
+if (!validInitial) {
+  const qqId = getActivePlaylistId() || initialQQPlaylists[0]?.id;
+  const neteaseId = getActiveNeteasePlaylistId() || initialNeteasePlaylists[0]?.id;
+  initialActiveLibrary = qqId ? importedPlaylistKey('qq', qqId) : importedPlaylistKey('netease', neteaseId);
+}
+if (initialActiveLibrary?.startsWith('netease:')) {
+  switchNeteasePlaylist(tracks, initialActiveLibrary.slice('netease:'.length));
+} else if (initialActiveLibrary?.startsWith('qq:')) {
+  switchQQPlaylist(tracks, initialActiveLibrary.slice('qq:'.length));
+}
 
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 // 模式 4 是 GPU 地形：走独立的 WebGL 画布，前面四种仍是原来的 Canvas 2D 画法
@@ -1887,6 +1917,12 @@ export default function App() {
   // 导入的歌单列表 + 当前生效的那个（null 表示「全部」）
   const [qqPlaylists, setQQPlaylists] = useState(listQQPlaylists);
   const [activePlaylist, setActivePlaylist] = useState(getActivePlaylistId);
+  const [neteasePlaylists, setNeteasePlaylists] = useState(listNeteasePlaylists);
+  const [activeLibrary, setActiveLibrary] = useState(initialActiveLibrary);
+  const combinedPlaylists = useMemo(() => [
+    ...qqPlaylists.map(item => ({ ...item, id: importedPlaylistKey('qq', item.id), rawId: item.id, provider: 'qq' })),
+    ...neteasePlaylists.map(item => ({ ...item, id: importedPlaylistKey('netease', item.id), rawId: item.id, provider: 'netease' })),
+  ], [neteasePlaylists, qqPlaylists]);
   // 曲库版本号：只要重建过 tracks 就自增。不能用 tracks.length——
   // 两个歌单都是 30 首时长度不变，依赖它的 useMemo 不会重算，卡片就不跟着切。
   const [libraryVersion, setLibraryVersion] = useState(0);
@@ -2329,9 +2365,15 @@ export default function App() {
 
   // 切歌单：把当前生效的曲目整体换掉，播放停在第一首等用户点——
   // 换的是整批内容，续播到一半的位置没有意义，硬续反而会跳到一首不相干的歌。
-  const applyPlaylistChange = useCallback((nextActiveId, toastText) => {
-    setActivePlaylist(nextActiveId);
+  const applyPlaylistChange = useCallback((nextActiveKey, toastText) => {
+    setActiveLibrary(nextActiveKey);
+    try {
+      if (nextActiveKey) localStorage.setItem(ACTIVE_LIBRARY_KEY, nextActiveKey);
+      else localStorage.removeItem(ACTIVE_LIBRARY_KEY);
+    } catch { /* privacy mode */ }
+    setActivePlaylist(getActivePlaylistId());
     setQQPlaylists(listQQPlaylists());
+    setNeteasePlaylists(listNeteasePlaylists());
     setLibraryVersion(version => version + 1);
     setJournal(false);
     setSelected(null);
@@ -2363,26 +2405,44 @@ export default function App() {
     // 零散添加（搜索结果逐首＋）不动当前歌单，免得听一半被切走。
     // 生效歌单以存储层的最终状态为准：activeId 现在永远指向某个真实歌单，
     // 用 React 里的旧值会跟存储脱节（比如首次零散导入会落回第一个歌单）。
-    if (meta?.id) switchQQPlaylist(tracks, meta.id);
-    applyPlaylistChange(getActivePlaylistId(), `已导入 ${result.added} 首${result.playlist ? ` · 当前歌单「${result.playlist.name}」` : ''}`);
+    const targetId = meta?.id || result.playlist?.id || getActivePlaylistId();
+    removeImportedTracks(tracks);
+    const switched = switchQQPlaylist(tracks, targetId);
+    applyPlaylistChange(importedPlaylistKey('qq', switched.id), `已导入 ${result.added} 首${result.playlist ? ` · 当前歌单「${result.playlist.name}」` : ''}`);
     return result.added;
   }, [applyPlaylistChange]);
 
-  const handleSwitchPlaylist = useCallback(playlistId => {
-    if (!playlistId) return;
-    const result = switchQQPlaylist(tracks, playlistId);
-    if (result.id === activePlaylist) return;
-    const name = qqPlaylists.find(item => item.id === playlistId)?.name || '歌单';
-    applyPlaylistChange(result.id, `已切换到「${name}」· ${result.count} 首`);
-  }, [activePlaylist, applyPlaylistChange, qqPlaylists]);
+  const handleSwitchPlaylist = useCallback(playlistKey => {
+    if (!playlistKey || playlistKey === activeLibrary) return;
+    const [provider, ...idParts] = String(playlistKey).split(':');
+    const playlistId = idParts.join(':');
+    removeImportedTracks(tracks);
+    const result = provider === 'netease'
+      ? switchNeteasePlaylist(tracks, playlistId)
+      : switchQQPlaylist(tracks, playlistId);
+    const list = provider === 'netease' ? neteasePlaylists : qqPlaylists;
+    const name = list.find(item => item.id === result.id)?.name || '歌单';
+    applyPlaylistChange(importedPlaylistKey(provider, result.id), `已切换到「${name}」· ${result.count} 首`);
+  }, [activeLibrary, applyPlaylistChange, neteasePlaylists, qqPlaylists]);
 
   const handleRemovePlaylist = useCallback(playlistId => {
     const name = qqPlaylists.find(item => item.id === playlistId)?.name || '歌单';
     const result = removeQQPlaylist(tracks, playlistId);
     if (!result.removed) return;
     const nextName = qqPlaylists.find(item => item.id === result.activeId)?.name;
-    applyPlaylistChange(result.activeId, `已移除歌单「${name}」${nextName ? ` · 当前「${nextName}」` : ''}`);
-  }, [applyPlaylistChange, qqPlaylists]);
+    if (activeLibrary === importedPlaylistKey('qq', playlistId)) {
+      removeImportedTracks(tracks);
+      if (result.activeId) switchQQPlaylist(tracks, result.activeId);
+      else if (neteasePlaylists[0]) switchNeteasePlaylist(tracks, neteasePlaylists[0].id);
+      const nextKey = result.activeId
+        ? importedPlaylistKey('qq', result.activeId)
+        : importedPlaylistKey('netease', neteasePlaylists[0]?.id);
+      applyPlaylistChange(nextKey, `已移除歌单「${name}」${nextName ? ` · 当前「${nextName}」` : ''}`);
+    } else {
+      setQQPlaylists(listQQPlaylists());
+      showToast(`已移除歌单「${name}」`);
+    }
+  }, [activeLibrary, applyPlaylistChange, neteasePlaylists, qqPlaylists, showToast]);
 
   const handleQQClear = useCallback(() => {
     const audio = audioRef.current;
@@ -2412,27 +2472,44 @@ export default function App() {
         audio.load();
       }
     }
-    showToast('已清空 QQ 导入曲库');
-  }, [showToast]);
+    if (activeLibrary?.startsWith('qq:')) {
+      if (neteasePlaylists[0]) {
+        removeImportedTracks(tracks);
+        switchNeteasePlaylist(tracks, neteasePlaylists[0].id);
+        applyPlaylistChange(importedPlaylistKey('netease', neteasePlaylists[0].id), '已清空 QQ 导入曲库 · 已切换到网易云歌单');
+      } else {
+        applyPlaylistChange(null, '已清空 QQ 导入曲库');
+      }
+    } else {
+      showToast('已清空 QQ 导入曲库');
+    }
+  }, [activeLibrary, applyPlaylistChange, neteasePlaylists, showToast]);
 
   const handleNeteaseImport = useCallback((songs, meta) => {
     const result = importNeteaseTracks(tracks, songs, meta);
     if (!result.added) return 0;
-    applyPlaylistChange(getActivePlaylistId(), `已导入 ${result.added} 首网易云歌曲 · ${result.name}`);
+    removeImportedTracks(tracks);
+    const switched = switchNeteasePlaylist(tracks, result.playlist.id);
+    applyPlaylistChange(importedPlaylistKey('netease', switched.id), `已新建/更新网易云歌单「${result.name}」· ${switched.count} 首`);
     return result.added;
   }, [applyPlaylistChange]);
 
   const handleNeteaseClear = useCallback(() => {
-    const currentWasNetease = tracks[currentRef.current]?.provider === 'netease';
+    const currentWasNetease = activeLibrary?.startsWith('netease:');
     clearNeteaseTracks(tracks);
     clearPlaybackMemory();
-    if (currentWasNetease || !tracks[currentRef.current]) {
-      applyPlaylistChange(getActivePlaylistId(), '已清空网易云导入曲库');
+    if (currentWasNetease && qqPlaylists[0]) {
+      removeImportedTracks(tracks);
+      const switched = switchQQPlaylist(tracks, getActivePlaylistId() || qqPlaylists[0].id);
+      applyPlaylistChange(importedPlaylistKey('qq', switched.id), '已清空网易云导入曲库 · 已切换到 QQ 歌单');
+    } else if (currentWasNetease || !tracks[currentRef.current]) {
+      applyPlaylistChange(null, '已清空网易云导入曲库');
     } else {
+      setNeteasePlaylists([]);
       setLibraryVersion(version => version + 1);
       showToast('已清空网易云导入曲库');
     }
-  }, [applyPlaylistChange, showToast]);
+  }, [activeLibrary, applyPlaylistChange, qqPlaylists, showToast]);
 
   const step = direction => {
     if (!tracks.length) return;
@@ -2449,10 +2526,10 @@ export default function App() {
         onChangeView={setJournal}
         onOpenBridge={() => setQQBridgeOpen(true)}
         onOpenNetease={() => setNeteaseBridgeOpen(true)}
-        qqCount={tracks.filter(item => item.provider === 'qq').length}
-        neteaseCount={tracks.filter(item => item.provider === 'netease').length}
-        playlists={qqPlaylists}
-        activePlaylist={activePlaylist}
+        qqCount={qqPlaylists.reduce((total, item) => total + item.count, 0)}
+        neteaseCount={neteasePlaylists.reduce((total, item) => total + item.count, 0)}
+        playlists={combinedPlaylists}
+        activePlaylist={activeLibrary}
         onSwitchPlaylist={handleSwitchPlaylist}
         updater={updater}
       />
@@ -2532,10 +2609,10 @@ export default function App() {
         onClose={() => setQQBridgeOpen(false)}
         onImport={handleQQImport}
         onClear={handleQQClear}
-        importedCount={tracks.filter(item => item.provider === 'qq').length}
+        importedCount={qqPlaylists.reduce((total, item) => total + item.count, 0)}
         playlists={qqPlaylists}
-        activePlaylistId={activePlaylist}
-        onSwitchPlaylist={handleSwitchPlaylist}
+        activePlaylistId={activeLibrary?.startsWith('qq:') ? activePlaylist : null}
+        onSwitchPlaylist={id => handleSwitchPlaylist(importedPlaylistKey('qq', id))}
         onRemovePlaylist={handleRemovePlaylist}
         sampleSongs={tracks.filter(item => item.provider === 'qq' && item.mid).slice(0, 8)
           .map(item => ({ mid: item.mid, mediaMid: item.mediaMid, title: item.title }))}
@@ -2545,7 +2622,7 @@ export default function App() {
         onClose={() => setNeteaseBridgeOpen(false)}
         onImport={handleNeteaseImport}
         onClear={handleNeteaseClear}
-        importedCount={tracks.filter(item => item.provider === 'netease').length}
+        importedCount={neteasePlaylists.reduce((total, item) => total + item.count, 0)}
       />
       <div id="toast" className={toastText ? 'show' : ''} role="status">{toastText}</div>
       <audio
