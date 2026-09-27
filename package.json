@@ -15,7 +15,8 @@
     "preview": "vite preview --host 127.0.0.1 --port 8765",
     "build:electron:dir": "npm run build && electron-builder --dir",
     "build:electron": "npm run build && electron-builder",
-    "release": "npm run build && electron-builder --win --publish always"
+    "release": "npm run build && node scripts/release.mjs && node scripts/fix-release.mjs",
+    "fix-release": "node scripts/fix-release.mjs"
   },
   "dependencies": {
     "electron-updater": "^6.8.9",
