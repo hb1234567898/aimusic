@@ -1568,7 +1568,14 @@ function Player({ track, current, playing, preparing, currentTime, duration, ran
             disabled={preparing}
             aria-busy={preparing}
             aria-label={preparing ? '正在准备歌词与音源' : playing ? '暂停' : '播放'}
-          ><Icon name={preparing ? 'wait' : playing ? 'pause' : 'play'} /></button>
+          >
+            {preparing ? (
+              <span className="play-loader" aria-hidden="true">
+                <span className="play-loader-orbit" />
+                <Icon name="wait" className="play-loader-icon" />
+              </span>
+            ) : <Icon name={playing ? 'pause' : 'play'} />}
+          </button>
           <button className="icon" onClick={() => onStep(1)} aria-label="下一首"><Icon name="next" /></button>
           <button className="icon secondary" onClick={onRepeat} aria-label="循环播放" aria-pressed={repeat}>↻</button>
         </div>
