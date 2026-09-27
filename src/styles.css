@@ -102,7 +102,13 @@ input[type=range]:disabled{opacity:.35;cursor:default}
 .output-wrap{position:relative;display:flex;align-items:center}
 .output-btn svg{width:19px;height:19px}
 .output-btn.on{color:#fff;opacity:1}
-.output-menu{position:absolute;right:0;bottom:calc(100% + 14px);width:262px;max-height:60dvh;overflow:auto;padding:12px;border-radius:16px;z-index:140;display:flex;flex-direction:column;gap:2px;animation:menu-in .18s cubic-bezier(.22,.8,.24,1)}
+.quality-btn{height:29px;padding:0 11px;border-radius:9px;background:#ffffff10;border:1px solid #ffffff1a;color:#c9c9ce;font-size:10px;letter-spacing:1.2px;white-space:nowrap}
+.quality-btn:hover{background:#ffffff1e;color:#fff}
+.quality-btn.on{background:#ffffff1c;color:#fff;border-color:#ffffff30}
+.quality-menu{width:216px}
+.quality-menu .output-item:disabled{opacity:.4;cursor:default}
+.quality-menu .output-item:disabled:hover{background:none;color:#b6b6bf}
+.output-menu{position:absolute;right:0;bottom:calc(100% + 14px);width:262px;max-height:60dvh;overflow:auto;padding:12px;border-radius:16px;z-index:140;display:flex;flex-direction:column;gap:2px;animation:menu-in .18s cubic-bezier(.22,.8,.24,1);background:#191a20f5}
 @keyframes menu-in{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
 .output-head{font-size:8px;letter-spacing:2.2px;color:#7d7d87;padding:2px 8px 8px}
 .output-sep{font-size:8px;letter-spacing:2.2px;color:#7d7d87;padding:10px 8px 4px;border-top:1px solid #ffffff14;margin-top:6px}

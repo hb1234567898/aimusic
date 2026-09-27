@@ -5,6 +5,7 @@ import QQBridge from './QQBridge.jsx';
 import {
   clearQQTracks, hydrateQQTracks, importQQPlaylist, listQQPlaylists,
   getActivePlaylistId, removeQQPlaylist, switchQQPlaylist,
+  QQ_QUALITY_KEY, QQ_QUALITY_OPTIONS, readQQQuality,
 } from './qqLibrary.js';
 import { BeatEngine } from './beatEngine.js';
 import { OUTPUT_MODES, applySink, clearPlaybackMemory, listOutputs, readBeatOffset, readLastTrack, readOutputPref, requestDeviceLabels, resumeAt, saveBeatOffset, saveLastTrack, saveOutputPref, saveProgress } from './audioOut.js';
@@ -18,6 +19,17 @@ hydrateQQTracks(tracks);
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 // 模式 4 是 GPU 地形：走独立的 WebGL 画布，前面四种仍是原来的 Canvas 2D 画法
 const backdropNames = ['星尘点阵', '声波轨道', '呼吸星云', '律动地形', '声波地形'];
+
+// QQ 音乐走的是本地代理地址 /api/qq/audio?mid=..&quality=xxx，音质只是 URL 上的一个参数，
+// 所以切换音质改这个参数即可，不用重新导歌。
+// 档位表本身放在 qqLibrary.js —— 拼播放地址时也要用它，不能两个地方各写一份。
+function swapQQQuality(src, quality) {
+  try {
+    const url = new URL(src, location.href);
+    url.searchParams.set('quality', quality);
+    return `${url.pathname}${url.search}`;
+  } catch { return src; }
+}
 
 // 安卓内核（含微信 X5 / 老 WebView）按 UA 单独识别：
 // 它的音频输出延迟、调度策略和桌面 Chrome 完全不同，很多参数要单独给一套。
@@ -102,6 +114,7 @@ function SvgDefs() {
         <symbol id="i-shuffle" viewBox="0 0 24 24"><path d="M3 6h3c5 0 7 12 12 12h3m-4-4 4 4-4 4M3 18h3c2 0 4-3 5-5m3-4c1-2 2-3 4-3h3m-4-4 4 4-4 4" /></symbol>
         <symbol id="i-wait" viewBox="0 0 24 24"><path d="M12 3a9 9 0 1 0 9 9" /></symbol>
         <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6" strokeWidth="2" /></symbol>
+        <symbol id="i-pulse" viewBox="0 0 24 24"><path d="M4 10v4M8 6.5v11M12 3.5v17M16 8v8M20 11v2" strokeWidth="2" strokeLinecap="round" /></symbol>
       </defs>
     </svg>
   );
@@ -112,10 +125,13 @@ function Icon({ name, className = '' }) {
 }
 
 function LiquidArt({ src, alt = '', className = '' }) {
+  // 空地址必须整体不渲染 img：<img src=""> 会让浏览器把当前页面再请求一遍，
+  // 控制台刷屏不说，还会平白吃掉一次文档请求。没有封面就只留 .liquid-art 的底色。
+  const hasArt = Boolean(src);
   return (
     <span className={`liquid-art ${className}`}>
-      <img className="art-blur" src={src} alt="" aria-hidden="true" draggable="false" />
-      <img className="art-image" src={src} alt={alt} draggable="false" />
+      {hasArt && <img className="art-blur" src={src} alt="" aria-hidden="true" draggable="false" />}
+      {hasArt && <img className="art-image" src={src} alt={alt} draggable="false" />}
     </span>
   );
 }
@@ -1662,13 +1678,17 @@ function Journal({ onOpen }) {
   );
 }
 
-function Player({ track, current, playing, preparing, currentTime, duration, random, repeat, liked, volume, muted, outputPref, outputs, outputMenu, beatOffset, hidden, onHiddenChange, onBeatOffset, onOutputToggle, onOutputPick, onPlay, onStep, onSeek, onShuffle, onRepeat, onFavorite, onVolume, onMute, onOpen }) {
+function Player({ track, current, playing, preparing, currentTime, duration, random, repeat, liked, volume, muted, outputPref, outputs, outputMenu, beatOffset, hidden, qqQuality, qualityBusy, onQuality, onHiddenChange, onBeatOffset, onOutputToggle, onOutputPick, onPlay, onStep, onSeek, onShuffle, onRepeat, onFavorite, onVolume, onMute, onOpen }) {
   // duration 未知（metadata 没到 / iOS 对 mp3 常报 Infinity）时进度条必须整体禁用，
   // 千万不能用 100 当 max：断点续播把 currentTime 设到 120s 的话，滑块会顶到最右边。
   const safeDuration = Number.isFinite(duration) && duration > 0 ? duration : 0;
   // 拖动进度条期间用本地值渲染，否则 timeupdate 每 250ms 一次的重渲染
   // 会和手指拖动打架，表现就是滑块往回跳、松手位置不对。
   const [scrub, setScrub] = useState(null);
+  // 只有 QQ 代理地址才有得挑音质：本地文件一出生就定型了，摆个菜单出来纯属误导
+  const isQQ = track?.provider === 'qq';
+  const [qualityOpen, setQualityOpen] = useState(false);
+  const qualityOption = QQ_QUALITY_OPTIONS.find(item => item.value === qqQuality);
   const shownTime = scrub ?? Math.min(currentTime, safeDuration || currentTime);
   const progress = safeDuration ? Math.min(shownTime, safeDuration) / safeDuration * 100 : 0;
   const commitScrub = () => {
@@ -1747,7 +1767,7 @@ function Player({ track, current, playing, preparing, currentTime, duration, ran
         <button className="icon" onClick={onMute} aria-label={muted ? '取消静音' : '静音'} style={{ opacity: muted ? 0.4 : 1 }}><Icon name="vol" /></button>
         <input type="range" min="0" max="1" step=".01" value={volume} aria-label="音量" style={{ '--fill': `${volume * 100}%` }} onChange={event => onVolume(Number(event.target.value))} />
         <div className="output-wrap">
-          <button className={`icon output-btn ${outputMenu ? 'on' : ''}`} onClick={onOutputToggle} aria-label="选择音频输出设备" aria-expanded={outputMenu} title="音频输出"><Icon name="speaker" /></button>
+          <button className={`icon output-btn ${outputMenu ? 'on' : ''}`} onClick={onOutputToggle} aria-label="律动与音频输出设置" aria-expanded={outputMenu} title="律动 / 输出"><Icon name="pulse" /></button>
           {outputMenu && (
             <div className="output-menu glass" role="menu">
               <div className="output-head">音频输出</div>
@@ -1778,6 +1798,38 @@ function Player({ track, current, playing, preparing, currentTime, duration, ran
             </div>
           )}
         </div>
+        {isQQ ? (
+          <div className="output-wrap">
+            <button
+              className={`quality-btn ${qualityOpen ? 'on' : ''}`}
+              onClick={() => setQualityOpen(value => !value)}
+              aria-label="选择 QQ 音乐音质"
+              aria-expanded={qualityOpen}
+              title="QQ 音质"
+            >
+              {qualityOption?.short || '音质'}
+            </button>
+            {qualityOpen && (
+              <div className="output-menu quality-menu" role="menu">
+                <div className="output-head">QQ 音质</div>
+                {QQ_QUALITY_OPTIONS.map(option => (
+                  <button
+                    key={option.value}
+                    className={`output-item ${qqQuality === option.value ? 'on' : ''}`}
+                    role="menuitemradio"
+                    aria-checked={qqQuality === option.value}
+                    disabled={qualityBusy}
+                    onClick={() => { setQualityOpen(false); onQuality(option.value); }}
+                  >
+                    <strong>{option.label}</strong>
+                    <small>{option.hint}</small>
+                  </button>
+                ))}
+                <div className="output-empty">高规格需要对应会员权限，拿不到时会自动降级到可用的一档。</div>
+              </div>
+            )}
+          </div>
+        ) : null}
         <button className="icon note-icon" onClick={onOpen} aria-label="阅读当前歌曲手记">☷</button>
         <button className="icon collapse-btn" onClick={() => onHiddenChange(true)} aria-label="收起播放栏" title="收起播放栏"><Icon name="chevron" /></button>
       </div>
@@ -1857,6 +1909,8 @@ export default function App() {
   const [beatOffset, setBeatOffset] = useState(readBeatOffset);
   const [outputs, setOutputs] = useState([]);
   const [outputMenu, setOutputMenu] = useState(false);
+  const [qqQuality, setQQQuality] = useState(readQQQuality);
+  const [qualityBusy, setQualityBusy] = useState(false);
   const [playerHidden, setPlayerHidden] = useState(false);
   // ref 必须从恢复出来的歌曲开始；先写 0 会让首屏初始化把续播位置套到第一首歌。
   const currentRef = useRef(current);
@@ -2214,6 +2268,51 @@ export default function App() {
     if (shouldPlay) startPlayback();
   }, [current, startPlayback]);
 
+  // 切换 QQ 音质。自带地址是本地代理 /api/qq/audio?...&quality=xxx，音质就是 URL 上的一个参数，
+  // 改掉重新加载即可。难点是换 src 会把播放位置清零，所以要把进度记下来，加载完再 seek 回去。
+  const applyQQQuality = useCallback(async (quality) => {
+    const track = tracks[currentRef.current];
+    const audio = audioRef.current;
+    if (!track || track.provider !== 'qq' || !audio) return;
+    // 已经在这一档了就别重来：换 src 会让正在播的歌断一下，重复点同一档体验很差
+    if (quality === qqQuality) return;
+    const resumeAt = audio.currentTime;
+    const wasPlaying = !audio.paused;
+    setQualityBusy(true);
+    try {
+      // 整个列表一起改：只改当前这首的话，切到下一首就退回旧档了
+      tracks.forEach(item => {
+        if (item.provider === 'qq' && item.src) item.src = swapQQQuality(item.src, quality);
+      });
+      const nextSrc = track.src;
+      setQQQuality(quality);
+      try { localStorage.setItem(QQ_QUALITY_KEY, quality); } catch { /* 隐私模式下记不住，仅本次会话生效 */ }
+      audio.src = nextSrc;
+      audio.load();
+      await new Promise(resolve => {
+        const settle = () => {
+          audio.removeEventListener('loadedmetadata', settle);
+          audio.removeEventListener('error', settle);
+          resolve();
+        };
+        audio.addEventListener('loadedmetadata', settle);
+        audio.addEventListener('error', settle);
+      });
+      if (resumeAt > 0.05) { try { audio.currentTime = resumeAt; } catch { /* 元数据没到就先不 seek */ } }
+      if (wasPlaying) await audio.play().catch(() => showToast('浏览器拦下了自动播放，点一下播放键继续'));
+      // 探一下有没有被降级成试听片段（服务端会在响应头里打标记）
+      fetch(nextSrc, { headers: { Range: 'bytes=0-0' }, cache: 'no-store' })
+        .then(response => {
+          if (response.headers.get('x-orbit-qq-trial')) showToast('这档音质只给到试听片段，已自动降级到可用规格');
+        })
+        .catch(() => {});
+    } catch {
+      showToast('切换音质失败，仍在用原来的音源');
+    } finally {
+      setQualityBusy(false);
+    }
+  }, [qqQuality, showToast]);
+
   // 切歌单：把当前生效的曲目整体换掉，播放停在第一首等用户点——
   // 换的是整批内容，续播到一半的位置没有意义，硬续反而会跳到一首不相干的歌。
   const applyPlaylistChange = useCallback((nextActiveId, toastText) => {
@@ -2364,6 +2463,9 @@ export default function App() {
         outputMenu={outputMenu}
         beatOffset={beatOffset}
         hidden={playerHidden}
+        onQuality={applyQQQuality}
+        qqQuality={qqQuality}
+        qualityBusy={qualityBusy}
         onHiddenChange={hidden => {
           setPlayerHidden(hidden);
           if (hidden) setOutputMenu(false);

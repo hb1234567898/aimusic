@@ -13,6 +13,28 @@ export const MAX_QQ_PLAYLISTS = 8;
 export const LOOSE_PLAYLIST_ID = 'loose';
 const LOOSE_PLAYLIST_NAME = '零散导入';
 
+// QQ 音质档位：必须和 server/qq-music.mjs 里的 QQ_QUALITY_CANDIDATES 一一对应，
+// 否则前端选了后端不认的名字，会被静默按第一档处理。
+// 放在这里而不是 App.jsx，是因为拼播放地址（toOrbitTrack）时就要读它——
+// 新导入的歌必须直接带上用户选过的档位，不能先按默认给一遍再纠正。
+export const QQ_QUALITY_KEY = 'aimusic.qqQuality';
+export const DEFAULT_QQ_QUALITY = 'lossless';
+export const QQ_QUALITY_OPTIONS = [
+  { value: 'hires', short: 'Hi-Res', label: 'Hi-Res', hint: 'FLAC · 最高规格' },
+  { value: 'lossless', short: 'FLAC', label: '无损', hint: 'FLAC' },
+  { value: 'exhigh', short: '320', label: '极高', hint: '320k MP3' },
+  { value: 'standard', short: '128', label: '标准', hint: '128k MP3' },
+  { value: 'aac', short: 'AAC', label: 'AAC', hint: 'M4A' },
+];
+export function readQQQuality() {
+  try {
+    const raw = localStorage.getItem(QQ_QUALITY_KEY);
+    return QQ_QUALITY_OPTIONS.some(item => item.value === raw) ? raw : DEFAULT_QQ_QUALITY;
+  } catch {
+    return DEFAULT_QQ_QUALITY;
+  }
+}
+
 const encode = value => encodeURIComponent(String(value || ''));
 
 // 这个函数要能吃两种形状：QQ 接口返回的原始歌曲（name + 毫秒时长），
@@ -44,7 +66,7 @@ function normalizeRemoteSong(song) {
 
 function toOrbitTrack(song, id) {
   const lyricQuery = `mid=${encode(song.mid)}${song.qqId ? `&id=${encode(song.qqId)}` : ''}`;
-  const audioQuery = `mid=${encode(song.mid)}${song.mediaMid ? `&mediaMid=${encode(song.mediaMid)}` : ''}&quality=exhigh`;
+  const audioQuery = `mid=${encode(song.mid)}${song.mediaMid ? `&mediaMid=${encode(song.mediaMid)}` : ''}&quality=${encode(readQQQuality())}`;
   return {
     ...song,
     id,
