@@ -224,7 +224,7 @@ function PlaylistSwitch({ playlists, activePlaylist, onSwitchPlaylist }) {
   if (!playlists.length) return null;
   return (
     <div className="playlist-switch" ref={rootRef}>
-      <button className="playlist-toggle glass" onClick={() => setOpen(value => !value)} aria-expanded={open} aria-haspopup="listbox">
+      <button className="playlist-toggle glass" onClick={() => setOpen(value => !value)} aria-expanded={open} aria-haspopup="listbox" title={active?.name || '选择歌单'}>
         <span className="playlist-toggle-label">{active?.name || '选择歌单'}</span>
         <span className="playlist-toggle-count">{active?.count ?? 0} 首</span>
         <svg className={`playlist-chev ${open ? 'open' : ''}`} viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
