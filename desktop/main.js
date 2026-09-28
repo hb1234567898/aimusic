@@ -24,11 +24,27 @@ let updateDownloadPromise = null;
 let downloadedInstallerPath = '';
 
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
-app.commandLine.appendSwitch('force_high_performance_gpu');
-app.commandLine.appendSwitch('ignore-gpu-blocklist');
-app.commandLine.appendSwitch('disable-background-timer-throttling');
+// 保留 Chromium 默认硬件加速，让 Windows 自己选择集显/独显；兼容性不佳时交给
+// 现有 WebGL 回退处理，避免播放器仅在后台也强制唤醒高性能显卡。
 app.setName('ORBIT Music');
 app.setAppUserModelId('com.orbit.music.desktop');
+
+// Windows 快捷方式被连续点按时只保留一个主进程。第二次启动负责把已经存在的
+// 窗口拉回前台，不能再起一套本地服务和 GPU/渲染进程留在后台占资源。
+const hasSingleInstanceLock = app.requestSingleInstanceLock();
+if (!hasSingleInstanceLock) app.quit();
+
+function revealMainWindow() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  if (!mainWindow.isVisible()) mainWindow.show();
+  mainWindow.focus();
+}
+
+function emitVisualActivity(active) {
+  if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) return;
+  mainWindow.webContents.send('orbit-visual-activity', Boolean(active));
+}
 
 function parseCookieHeader(cookieText) {
   const result = {};
@@ -350,9 +366,16 @@ async function createWindow() {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false,
+      // 允许 Chromium 在最小化/隐藏后暂停 rAF、CSS 动画和普通计时器。
+      // audio 元素与 AudioWorklet 仍继续出声，恢复窗口后视觉循环会自动续上。
+      backgroundThrottling: true,
     },
   });
   mainWindow.on('ready-to-show', () => mainWindow?.show());
+  mainWindow.on('minimize', () => emitVisualActivity(false));
+  mainWindow.on('hide', () => emitVisualActivity(false));
+  mainWindow.on('restore', () => emitVisualActivity(true));
+  mainWindow.on('show', () => emitVisualActivity(true));
   mainWindow.on('closed', () => { mainWindow = null; });
   await mainWindow.loadURL(appUrl);
 }
@@ -485,17 +508,23 @@ ipcMain.handle('orbit-clear-netease-login', async () => {
   return { ok: true };
 });
 
-app.whenReady().then(async () => {
-  watchQQPlaybackCookies();
-  watchNeteaseCookies();
-  await createWindow();
-  // 窗口就绪后再挂 updater，之前发的事件没有接收方会丢
-  await wireUpdater();
-  if (updaterEnabled && autoUpdater) autoUpdater.checkForUpdates().catch(() => {});
-});
-app.on('window-all-closed', () => {
-  if (displaySleepBlockerId !== null && powerSaveBlocker.isStarted(displaySleepBlockerId)) powerSaveBlocker.stop(displaySleepBlockerId);
-  displaySleepBlockerId = null;
-  if (process.platform !== 'darwin') app.quit();
-});
-app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
+if (hasSingleInstanceLock) {
+  app.on('second-instance', revealMainWindow);
+  app.whenReady().then(async () => {
+    watchQQPlaybackCookies();
+    watchNeteaseCookies();
+    await createWindow();
+    // 窗口就绪后再挂 updater，之前发的事件没有接收方会丢
+    await wireUpdater();
+    if (updaterEnabled && autoUpdater) autoUpdater.checkForUpdates().catch(() => {});
+  });
+  app.on('window-all-closed', () => {
+    if (displaySleepBlockerId !== null && powerSaveBlocker.isStarted(displaySleepBlockerId)) powerSaveBlocker.stop(displaySleepBlockerId);
+    displaySleepBlockerId = null;
+    if (process.platform !== 'darwin') app.quit();
+  });
+  app.on('activate', () => {
+    if (BrowserWindow.getAllWindows().length === 0) createWindow();
+    else revealMainWindow();
+  });
+}

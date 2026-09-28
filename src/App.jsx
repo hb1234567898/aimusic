@@ -646,6 +646,8 @@ function Universe({ current, playing, currentTime, duration, onSelect, zoom, bac
     let focusedTrack = -1;
     let lastFrame = 0;
     let animationFrame = 0;
+    let desktopVisualActive = true;
+    let visualsActive = !document.hidden;
     let refocusTimer = 0;
     let wasPlaying = false;
     let revealCardsUntil = 0;
@@ -1503,6 +1505,8 @@ function Universe({ current, playing, currentTime, duration, onSelect, zoom, bac
     };
 
     const animate = timestamp => {
+      animationFrame = 0;
+      if (!visualsActive) return;
       const dt = Math.min(timestamp - lastFrame || 16, 32);
       lastFrame = timestamp;
       // 直接点播放（没换歌）也要把镜头转到正在播的那首，否则按了播放却看不见它在哪。
@@ -1537,8 +1541,26 @@ function Universe({ current, playing, currentTime, duration, onSelect, zoom, bac
       // 卡片与地形都保持逐帧更新；交互期的 GPU 预算由地形内部动态降级承担。
       drawSoundfield(timestamp, dt / 1000);
       drawSphere();
-      animationFrame = requestAnimationFrame(animate);
+      if (visualsActive) animationFrame = requestAnimationFrame(animate);
     };
+
+    const syncVisualActivity = () => {
+      const next = desktopVisualActive && !document.hidden;
+      if (next === visualsActive) return;
+      visualsActive = next;
+      if (!visualsActive) {
+        if (animationFrame) cancelAnimationFrame(animationFrame);
+        animationFrame = 0;
+        return;
+      }
+      lastFrame = performance.now();
+      if (!animationFrame) animationFrame = requestAnimationFrame(animate);
+    };
+    const onVisibilityChange = () => syncVisualActivity();
+    const stopDesktopVisualListener = window.orbitDesktop?.onVisualActivity?.(active => {
+      desktopVisualActive = active;
+      syncVisualActivity();
+    });
 
     const startDrag = event => {
       if (event.button !== 0 || event.target.closest('.view-controls')) return;
@@ -1623,10 +1645,13 @@ function Universe({ current, playing, currentTime, duration, onSelect, zoom, bac
     universe.addEventListener('dragstart', preventSelection);
     universe.addEventListener('keydown', onKeyDown);
     universe.querySelector('#rotate')?.addEventListener('click', toggleRotate);
-    animationFrame = requestAnimationFrame(animate);
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    if (visualsActive) animationFrame = requestAnimationFrame(animate);
     return () => {
       cancelAnimationFrame(animationFrame);
       clearTimeout(refocusTimer);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+      stopDesktopVisualListener?.();
       resizeObserver.disconnect();
       // 离开宇宙视图时把节拍值归零，免得停在某一帧的亮度上
       document.getElementById('lyrics-panel')?.style.setProperty('--beat', '0');

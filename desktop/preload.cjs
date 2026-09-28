@@ -20,6 +20,11 @@ contextBridge.exposeInMainWorld('orbitDesktop', {
     ipcRenderer.on('orbit-update-state', listener);
     return () => ipcRenderer.removeListener('orbit-update-state', listener);
   },
+  onVisualActivity: callback => {
+    const listener = (_event, active) => callback(Boolean(active));
+    ipcRenderer.on('orbit-visual-activity', listener);
+    return () => ipcRenderer.removeListener('orbit-visual-activity', listener);
+  },
 });
 
 window.addEventListener('DOMContentLoaded', () => {
