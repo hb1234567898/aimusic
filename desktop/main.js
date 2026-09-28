@@ -4,7 +4,7 @@ import { app, BrowserWindow, ipcMain, powerSaveBlocker, session, shell } from 'e
 import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { downloadVerifiedUpdate } from './update-download.mjs';
+import { checkForVerifiedUpdate, downloadVerifiedUpdate } from './update-download.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const appRoot = path.resolve(__dirname, '..');
@@ -18,8 +18,8 @@ let mainWindow = null;
 let qqCookieSyncTimer = null;
 let neteaseCookieSyncTimer = null;
 let displaySleepBlockerId = null;
-let autoUpdater = null;
 let pendingUpdateInfo = null;
+let updateCheckPromise = null;
 let updateDownloadPromise = null;
 let downloadedInstallerPath = '';
 
@@ -432,54 +432,35 @@ function startVerifiedUpdateDownload(info = pendingUpdateInfo) {
   return updateDownloadPromise;
 }
 
-async function wireUpdater() {
-  if (!updaterEnabled) return;
-  // 更新器不是播放器启动的硬依赖。曾经出现安装包漏收 electron-updater，
-  // 顶层静态 import 会让整个主进程在窗口出现前直接崩溃。改成运行时加载：
-  // 正常制品仍有完整 OTA；极端情况下只关闭更新，不影响听歌和登录。
-  try {
-    const updaterModule = await import('electron-updater');
-    autoUpdater = (updaterModule.default || updaterModule).autoUpdater;
-  } catch (error) {
-    emitUpdateState({ phase: 'error', message: `自动更新组件不可用：${error?.message || '加载失败'}` });
-    return;
-  }
-  // 版本检查仍然使用 GitHub 官方源，确保拿到官方 SHA-512；实际下载由下方的
-  // 多线路下载器完成。中国区域优先镜像并逐字节校验，失败再回退 GitHub。
-  autoUpdater.autoDownload = false;
-  // 下载完不趁App退出偷偷装上，等用户点一下徽章再重启，避免抢走控制权。
-  autoUpdater.autoInstallOnAppQuit = false;
-  autoUpdater.allowDowngrade = false;
-
-  autoUpdater.on('checking-for-update', () => emitUpdateState({ phase: 'checking' }));
-  autoUpdater.on('update-available', (info) => {
-    pendingUpdateInfo = info;
+async function checkForUpdates() {
+  if (!updaterEnabled) return { ok: false, reason: 'dev' };
+  if (updateCheckPromise) return updateCheckPromise;
+  emitUpdateState({ phase: 'checking' });
+  updateCheckPromise = checkForVerifiedUpdate({
+    currentVersion: app.getVersion(),
+    preferMirrors: prefersChinaUpdateMirrors(),
+  }).then(result => {
+    if (!result.available) {
+      emitUpdateState({ phase: 'idle', version: result.info.version, source: result.source });
+      return { ok: true, available: false, version: result.info.version, source: result.source };
+    }
+    pendingUpdateInfo = result.info;
     downloadedInstallerPath = '';
-    emitUpdateState({
-      phase: 'available',
-      version: info?.version || '',
-      releaseNotes: typeof info?.releaseNotes === 'string' ? info.releaseNotes : '',
-    });
-    startVerifiedUpdateDownload(info).catch(() => {});
-  });
-  autoUpdater.on('update-not-available', (info) => emitUpdateState({ phase: 'idle', version: info?.version || app.getVersion() }));
-  autoUpdater.on('error', (error) => emitUpdateState({
-    phase: 'error',
-    message: error?.message || '检查更新失败',
-  }));
+    emitUpdateState({ phase: 'available', version: result.info.version, source: result.source });
+    // 检查成功后直接进入下载；中国区域的清单和安装包都优先使用镜像。
+    startVerifiedUpdateDownload(result.info).catch(() => {});
+    return { ok: true, available: true, version: result.info.version, source: result.source };
+  }).catch(error => {
+    emitUpdateState({ phase: 'error', message: error?.message || '检查更新失败' });
+    return { ok: false, reason: error?.message || 'check-failed' };
+  }).finally(() => { updateCheckPromise = null; });
+  return updateCheckPromise;
 }
 
 ipcMain.handle('orbit-app-version', () => ({ version: app.getVersion(), updaterEnabled }));
-ipcMain.handle('orbit-check-update', async () => {
-  if (!updaterEnabled || !autoUpdater) return { ok: false, reason: updaterEnabled ? 'unavailable' : 'dev' };
-  try {
-    return await autoUpdater.checkForUpdates();
-  } catch (error) {
-    return { ok: false, reason: error?.message || 'check-failed' };
-  }
-});
+ipcMain.handle('orbit-check-update', () => checkForUpdates());
 ipcMain.handle('orbit-download-update', async () => {
-  if (!updaterEnabled || !autoUpdater) return { ok: false, reason: updaterEnabled ? 'unavailable' : 'dev' };
+  if (!updaterEnabled) return { ok: false, reason: 'dev' };
   try {
     await startVerifiedUpdateDownload();
     return { ok: true };
@@ -488,7 +469,7 @@ ipcMain.handle('orbit-download-update', async () => {
   }
 });
 ipcMain.handle('orbit-install-update', async () => {
-  if (!updaterEnabled || !autoUpdater) return { ok: false, reason: updaterEnabled ? 'unavailable' : 'dev' };
+  if (!updaterEnabled) return { ok: false, reason: 'dev' };
   if (!downloadedInstallerPath) return { ok: false, reason: 'not-downloaded' };
   const error = await shell.openPath(downloadedInstallerPath);
   if (error) return { ok: false, reason: error };
@@ -514,9 +495,8 @@ if (hasSingleInstanceLock) {
     watchQQPlaybackCookies();
     watchNeteaseCookies();
     await createWindow();
-    // 窗口就绪后再挂 updater，之前发的事件没有接收方会丢
-    await wireUpdater();
-    if (updaterEnabled && autoUpdater) autoUpdater.checkForUpdates().catch(() => {});
+    // 窗口就绪后再检查更新，之前发的状态事件没有接收方会丢。
+    if (updaterEnabled) checkForUpdates().catch(() => {});
   });
   app.on('window-all-closed', () => {
     if (displaySleepBlockerId !== null && powerSaveBlocker.isStarted(displaySleepBlockerId)) powerSaveBlocker.stop(displaySleepBlockerId);

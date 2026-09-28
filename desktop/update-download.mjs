@@ -5,10 +5,94 @@ import path from 'node:path';
 const OWNER = 'hb1234567898';
 const REPO = 'aimusic';
 const MIRROR_PREFIXES = [
+  'https://ghfast.top/',
+  'https://ghproxy.net/',
   'https://gh-proxy.com/',
   'https://gh-proxy.org/',
-  'https://ghfast.top/',
 ];
+const LATEST_MANIFEST_URL = `https://github.com/${OWNER}/${REPO}/releases/latest/download/latest.yml`;
+
+function stripYamlScalar(value) {
+  const text = String(value || '').trim();
+  if ((text.startsWith("'") && text.endsWith("'")) || (text.startsWith('"') && text.endsWith('"'))) {
+    return text.slice(1, -1);
+  }
+  return text;
+}
+
+export function parseUpdateManifest(source) {
+  const text = String(source || '');
+  const version = stripYamlScalar(text.match(/^version:\s*(.+)$/m)?.[1]);
+  const url = stripYamlScalar(text.match(/^\s*-\s+url:\s*(.+)$/m)?.[1]);
+  const sha512 = stripYamlScalar(text.match(/^\s+sha512:\s*(.+)$/m)?.[1]);
+  const sizeValue = stripYamlScalar(text.match(/^\s+size:\s*(.+)$/m)?.[1]);
+  const releaseDate = stripYamlScalar(text.match(/^releaseDate:\s*(.+)$/m)?.[1]);
+  const size = Number(sizeValue);
+  if (!/^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(version)) throw new Error('更新清单版本号无效');
+  if (!url || !/^[^/\\]+\.exe$/i.test(url)) throw new Error('更新清单安装包名称无效');
+  if (!/^[A-Za-z0-9+/]{80,}={0,2}$/.test(sha512)) throw new Error('更新清单校验值无效');
+  if (!Number.isSafeInteger(size) || size <= 0) throw new Error('更新清单文件大小无效');
+  return {
+    version,
+    files: [{ url, sha512, size }],
+    path: url,
+    sha512,
+    releaseDate,
+  };
+}
+
+export function compareVersions(left, right) {
+  const parts = value => String(value || '').split(/[+-]/, 1)[0].split('.').map(part => Number(part) || 0);
+  const a = parts(left);
+  const b = parts(right);
+  for (let index = 0; index < Math.max(a.length, b.length); index += 1) {
+    const delta = (a[index] || 0) - (b[index] || 0);
+    if (delta) return Math.sign(delta);
+  }
+  return 0;
+}
+
+export function buildManifestCandidates(preferMirrors = false) {
+  const mirrors = MIRROR_PREFIXES.map(prefix => `${prefix}${LATEST_MANIFEST_URL}`);
+  return preferMirrors ? [...mirrors, LATEST_MANIFEST_URL] : [LATEST_MANIFEST_URL, ...mirrors];
+}
+
+async function fetchManifest(url, timeoutMs) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(new Error('更新线路连接超时')), timeoutMs);
+  try {
+    const response = await fetch(url, {
+      redirect: 'follow',
+      signal: controller.signal,
+      headers: { 'User-Agent': 'ORBIT-Music-Updater', Accept: 'text/yaml,text/plain,*/*' },
+    });
+    if (!response.ok) throw new Error(`更新线路返回 ${response.status}`);
+    const declaredLength = Number(response.headers.get('content-length')) || 0;
+    if (declaredLength > 64 * 1024) throw new Error('更新清单异常过大');
+    const text = await response.text();
+    if (Buffer.byteLength(text, 'utf8') > 64 * 1024) throw new Error('更新清单异常过大');
+    return parseUpdateManifest(text);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+export async function checkForVerifiedUpdate({ currentVersion, preferMirrors = false, timeoutMs = 12000 }) {
+  const errors = [];
+  for (const url of buildManifestCandidates(preferMirrors)) {
+    try {
+      const info = await fetchManifest(url, timeoutMs);
+      return {
+        available: compareVersions(info.version, currentVersion) > 0,
+        info,
+        source: url === LATEST_MANIFEST_URL ? 'github' : 'mirror',
+      };
+    } catch (error) {
+      errors.push(error?.message || String(error));
+    }
+  }
+  throw new Error(`所有更新检查线路均失败：${errors.join('；')}`);
+}
 
 function installerFile(updateInfo) {
   const files = Array.isArray(updateInfo?.files) ? updateInfo.files : [];
