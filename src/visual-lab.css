@@ -1,0 +1,53 @@
+:root{font-family:"Segoe UI Variable","Microsoft YaHei UI","PingFang SC",sans-serif;color:#f2f3f5;background:#090a0c;font-synthesis:none;--lab-beat:0}
+*{box-sizing:border-box}
+html,body,#visual-lab-root{width:100%;height:100%;margin:0;overflow:hidden;background:#090a0c}
+button,select,input{font:inherit}
+button{border:0;cursor:pointer}
+.lab-shell{position:relative;width:100%;height:100dvh;min-height:620px;overflow:hidden;background:radial-gradient(circle at 58% 46%,#17191d 0,#0c0d10 36%,#08090b 76%)}
+.lab-canvas{position:absolute;inset:0;width:100%;height:100%}
+.lab-vignette{position:absolute;inset:0;pointer-events:none;background:linear-gradient(90deg,#090a0cf2 0,#090a0c9e 18%,transparent 44%),linear-gradient(0deg,#090a0cd9 0,transparent 25%),radial-gradient(circle at 50% 47%,transparent 30%,#07080ab0 100%)}
+.lab-header{position:absolute;z-index:3;top:0;left:0;right:0;height:92px;padding:0 3.4vw;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid #ffffff0b}
+.lab-brand{display:flex;align-items:center;gap:14px;color:#f3f4f5;text-decoration:none;letter-spacing:.14em}
+.lab-brand b{font-size:22px;letter-spacing:.18em}
+.lab-brand em{font-style:normal;font-size:8px;letter-spacing:.25em;color:#777b83;border-left:1px solid #ffffff1b;padding-left:15px}
+.lab-mark{position:relative;width:30px;height:22px;transform:rotate(-24deg);border:1.4px solid #eef0f3;border-radius:50%;display:grid;place-items:center}
+.lab-mark i{width:6px;height:6px;border-radius:50%;background:#f4f5f6;box-shadow:0 0 calc(8px + var(--lab-beat)*14px) #fff}
+.lab-status{display:flex;align-items:center;gap:12px;font:500 8px/1 "Cascadia Code","SFMono-Regular",monospace;letter-spacing:.18em;color:#71757d}
+.lab-status i{width:3px;height:3px;border-radius:50%;background:#dfe1e4;box-shadow:0 0 8px #fff}
+.lab-copy{position:absolute;z-index:3;left:4.2vw;top:124px;width:min(350px,30vw);pointer-events:none}
+.lab-copy>span{font:500 8px/1.2 "Cascadia Code","SFMono-Regular",monospace;letter-spacing:.24em;color:#777b83}
+.lab-copy h1{margin:17px 0 13px;font-size:clamp(28px,3.2vw,50px);font-weight:520;letter-spacing:-.055em;line-height:1;color:#f3f4f6;text-shadow:0 0 calc(14px + var(--lab-beat)*18px) #ffffff24}
+.lab-copy p{margin:0;max-width:32em;font-size:12px;line-height:1.85;color:#7c8088}
+.lab-modes{position:absolute;z-index:4;left:3.5vw;top:43%;width:min(300px,27vw);display:flex;flex-direction:column;border-top:1px solid #ffffff14}
+.lab-modes button{position:relative;display:grid;grid-template-columns:34px 1fr;grid-template-rows:1fr 1fr;align-items:end;column-gap:12px;height:64px;padding:0 8px;color:#696d74;text-align:left;background:transparent;border-bottom:1px solid #ffffff0d;transition:color .24s ease,padding-left .24s ease,background .24s ease;user-select:none;-webkit-user-select:none}
+.lab-modes button:hover{color:#b5b8bd;background:#ffffff05}
+.lab-modes button:active{transform:translateY(1px)}
+.lab-modes button.active{color:#f1f2f4;padding-left:15px;background:linear-gradient(90deg,#ffffff09,transparent)}
+.lab-modes button.active::before{content:"";position:absolute;left:0;top:15px;bottom:15px;width:2px;background:#f3f4f5;box-shadow:0 0 calc(8px + var(--lab-beat)*12px) #fff}
+.lab-modes button>span{grid-row:1/3;align-self:center;font:500 9px/1 "Cascadia Code",monospace;color:#4e5259}
+.lab-modes button strong{align-self:end;font-size:12px;font-weight:520;letter-spacing:.05em}
+.lab-modes button small{align-self:start;margin-top:4px;font:500 7px/1 "Cascadia Code",monospace;letter-spacing:.14em;color:#555960}
+.lab-modes button.active small{color:#8d9198}
+.lab-transport{position:absolute;z-index:5;left:50%;bottom:30px;transform:translateX(-50%);width:min(880px,86vw);height:78px;padding:10px 18px 10px 10px;display:grid;grid-template-columns:58px minmax(180px,1fr) 50px minmax(150px,.56fr) 74px;align-items:center;gap:14px;border:1px solid #ffffff18;border-radius:18px;background:linear-gradient(110deg,#3a3c4269,#17191dce 46%,#30323969);box-shadow:inset 0 1px 0 #ffffff25,0 22px 70px #0009;backdrop-filter:blur(25px) saturate(1.2)}
+.lab-transport>img{width:58px;height:58px;border-radius:10px;object-fit:cover;filter:saturate(.68) contrast(1.05)}
+.lab-track{min-width:0;display:flex;flex-direction:column;gap:6px}
+.lab-track label,.lab-sensitivity label{font:500 7px/1 "Cascadia Code",monospace;color:#737780;letter-spacing:.14em;text-transform:uppercase}
+.lab-track select{width:100%;min-width:0;padding:0 24px 0 0;border:0;outline:0;color:#e5e6e9;background:transparent;font-size:11px;white-space:nowrap;text-overflow:ellipsis}
+.lab-track option{color:#e8e9eb;background:#17181b}
+.lab-play{width:44px;height:44px;border-radius:50%;display:grid;place-items:center;color:#f4f5f6;background:#ffffff08;box-shadow:inset 0 0 0 1px #ffffff25,0 0 calc(10px + var(--lab-beat)*18px) #ffffff1c;transition:transform .18s ease,background .18s ease}
+.lab-play:hover{background:#ffffff12;transform:scale(1.05)}
+.lab-play:active{transform:scale(.94)}
+.lab-play span{font-size:14px;line-height:1;transform:translateX(1px)}
+.lab-sensitivity{display:flex;flex-direction:column;gap:8px;min-width:0}
+.lab-sensitivity label{display:flex;justify-content:space-between}
+.lab-sensitivity b{font-weight:500;color:#c4c6cb}
+.lab-sensitivity input{width:100%;height:2px;appearance:none;border-radius:2px;background:#ffffff22;outline:0}
+.lab-sensitivity input::-webkit-slider-thumb{appearance:none;width:8px;height:8px;border-radius:50%;background:#f0f1f3;box-shadow:0 0 8px #fff8}
+.lab-level{position:relative;width:74px;height:2px;background:#ffffff17;overflow:hidden}
+.lab-level i{position:absolute;inset:0;transform:scaleX(.02);transform-origin:left;background:#eef0f3;box-shadow:0 0 10px #fff;transition:transform .06s linear}
+.lab-footer{position:absolute;z-index:3;right:3.5vw;bottom:128px;display:flex;gap:20px;font:500 7px/1 "Cascadia Code",monospace;letter-spacing:.14em;color:#51555c}
+.lab-footer span+span{padding-left:20px;border-left:1px solid #ffffff12}
+.lab-error{position:absolute;z-index:9;left:50%;top:110px;transform:translateX(-50%);padding:10px 14px;border:1px solid #ffffff1f;border-radius:10px;color:#d7d9dd;background:#181a1eea;font-size:11px;box-shadow:0 16px 45px #000a}
+audio{display:none}
+@media(max-width:760px){.lab-shell{min-height:560px}.lab-header{height:72px;padding:0 20px}.lab-brand em,.lab-status span:last-child,.lab-copy p,.lab-footer{display:none}.lab-status{gap:0}.lab-copy{left:22px;top:95px;width:70vw}.lab-copy h1{font-size:31px;margin-top:12px}.lab-modes{left:18px;right:18px;top:auto;bottom:132px;width:auto;display:grid;grid-template-columns:repeat(4,1fr);border-top:1px solid #ffffff14}.lab-modes button{height:58px;display:flex;align-items:center;justify-content:center;padding:0;border-right:1px solid #ffffff0c}.lab-modes button strong,.lab-modes button small{display:none}.lab-modes button>span{font-size:10px}.lab-modes button.active{padding-left:0}.lab-modes button.active::before{left:22%;right:22%;top:auto;bottom:0;width:auto;height:2px}.lab-transport{bottom:18px;width:calc(100% - 28px);height:96px;grid-template-columns:48px 1fr 42px;padding:9px 12px;gap:10px}.lab-transport>img{width:48px;height:48px}.lab-play{width:40px;height:40px}.lab-sensitivity{grid-column:2/4}.lab-level{display:none}.lab-vignette{background:linear-gradient(0deg,#090a0cd9 0,transparent 30%),radial-gradient(circle at 50% 47%,transparent 28%,#07080ab0 100%)}}
+@media(prefers-reduced-motion:reduce){.lab-play,.lab-modes button{transition:none}}

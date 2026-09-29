@@ -30,6 +30,12 @@ export default defineConfig({
   },
   build: {
     assetsInlineLimit: 0,
+    rollupOptions: {
+      input: {
+        main: 'index.html',
+        visualLab: 'visual-lab.html',
+      },
+    },
     // 沙箱环境的批量删除保护会拦下 vite 清空 dist 的操作（assets 超过阈值），
     // 改为不清空输出目录：产物带内容哈希，旧文件只是冗余不会冲突。
     emptyOutDir: false,
