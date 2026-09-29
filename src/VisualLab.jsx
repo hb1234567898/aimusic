@@ -1,33 +1,39 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { BeatEngine } from './beatEngine.js';
 import { tracks } from './tracks.js';
-import { createVisualState, drawVisual, readBands } from './visualLabRenderer.js';
+import { createMoodState, readBands, updateMoodProfile } from './visualLabRenderer.js';
+import { createVisualLabGL } from './visualLabGL.js';
 import './visual-lab.css';
 
 const MODES = [
-  { id: 'orbit', index: '01', name: '轨道冠冕', en: 'ORBIT CROWN', note: '频谱沿圆周折叠，低频推动内核，重拍向外发射断续波前。' },
-  { id: 'canyon', index: '02', name: '频谱峡谷', en: 'SPECTRAL CANYON', note: '把连续频谱保存成纵深切片，鼓点抬高近景，形成向前流动的声场。' },
-  { id: 'ribbons', index: '03', name: '液态丝带', en: 'LIQUID RIBBONS', note: '八个频段各自保留运动轨迹，军鼓和镲片变成穿过丝带的瞬态闪光。' },
-  { id: 'sphere', index: '04', name: '脉冲球体', en: 'PULSE SPHERE', note: '频段能量映射到球面纬度，细频谱控制颗粒起伏，底鼓负责整体呼吸。' },
+  { id: 'veil', index: '01', name: '深海雾幕', en: 'VOLUMETRIC VEIL', note: '多层体积雾随情绪缓慢折叠。慢歌拉长呼吸与余韵，高能段落才提高丝状结构的密度。' },
+  { id: 'terrain', index: '02', name: '流体地貌', en: 'LIQUID TOPOGRAPHY', note: '光线步进生成连续地貌。低落时地形宽缓下沉，节奏增强后中心区域产生更清晰的起伏。' },
+  { id: 'rain', index: '03', name: '低频雨场', en: 'BASS WEATHER', note: '持续判断低频能量与占比。低频变厚才开始降雨，每颗雨滴落到水面后都会生成独立涟漪。' },
+  { id: 'core', index: '04', name: '情绪内核', en: 'AFFECTIVE CORE', note: '光线步进塑造可呼吸的三维内核。旋律改变表面材质，鼓点只触发短促的形变和余辉。' },
 ];
 
 export default function VisualLab() {
   const canvasRef = useRef(null);
   const audioRef = useRef(null);
   const graphRef = useRef(null);
-  const modeRef = useRef('orbit');
+  const glRef = useRef(null);
+  const modeRef = useRef('veil');
   const sensitivityRef = useRef(1);
   const meterRef = useRef(null);
   const fpsRef = useRef(null);
-  const visualStates = useRef(Object.fromEntries(MODES.map(mode => [mode.id, createVisualState()])));
-  const [mode, setMode] = useState('orbit');
+  const moodLabelRef = useRef(null);
+  const moodStateRef = useRef(createMoodState());
+  const customUrlRef = useRef('');
+  const [mode, setMode] = useState('veil');
   const [trackIndex, setTrackIndex] = useState(0);
+  const [customTrack, setCustomTrack] = useState(null);
   const [playing, setPlaying] = useState(false);
   const [sensitivity, setSensitivity] = useState(1);
   const [error, setError] = useState('');
 
   const selectedMode = MODES.find(item => item.id === mode) || MODES[0];
   const track = tracks[trackIndex] || tracks[0];
+  const activeSource = customTrack?.url || track.src;
 
   useEffect(() => { modeRef.current = mode; }, [mode]);
   useEffect(() => { sensitivityRef.current = sensitivity; }, [sensitivity]);
@@ -37,9 +43,33 @@ export default function VisualLab() {
     if (!audio) return;
     audio.pause();
     audio.load();
+    moodStateRef.current = createMoodState();
     setPlaying(false);
     setError('');
-  }, [trackIndex]);
+  }, [trackIndex, customTrack]);
+
+  useEffect(() => () => {
+    if (customUrlRef.current) URL.revokeObjectURL(customUrlRef.current);
+  }, []);
+
+  const chooseLocalAudio = event => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    audioRef.current?.pause();
+    if (customUrlRef.current) URL.revokeObjectURL(customUrlRef.current);
+    const url = URL.createObjectURL(file);
+    customUrlRef.current = url;
+    setCustomTrack({ name: file.name.replace(/\.[^.]+$/, ''), url });
+    event.target.value = '';
+  };
+
+  const chooseBuiltInTrack = event => {
+    audioRef.current?.pause();
+    if (customUrlRef.current) URL.revokeObjectURL(customUrlRef.current);
+    customUrlRef.current = '';
+    setCustomTrack(null);
+    setTrackIndex(Number(event.target.value));
+  };
 
   const ensureGraph = async () => {
     if (graphRef.current) {
@@ -75,21 +105,23 @@ export default function VisualLab() {
 
   useEffect(() => {
     const canvas = canvasRef.current;
-    const context2d = canvas.getContext('2d', { alpha: true });
+    let renderer;
+    try {
+      renderer = createVisualLabGL(canvas);
+      glRef.current = renderer;
+    } catch (reason) {
+      setError(reason?.message || 'WebGL2 初始化失败');
+      return undefined;
+    }
     let frameId = 0;
     let last = performance.now();
     let fpsTime = last;
     let fpsFrames = 0;
     const render = timestamp => {
       const rect = canvas.getBoundingClientRect();
-      const dpr = Math.min(window.devicePixelRatio || 1, 1.6);
-      const pixelWidth = Math.max(1, Math.round(rect.width * dpr));
-      const pixelHeight = Math.max(1, Math.round(rect.height * dpr));
-      if (canvas.width !== pixelWidth || canvas.height !== pixelHeight) {
-        canvas.width = pixelWidth;
-        canvas.height = pixelHeight;
-      }
-      context2d.setTransform(dpr, 0, 0, dpr, 0, 0);
+      const quality = rect.width < 760 ? 0.78 : 0.72;
+      const dpr = Math.min(window.devicePixelRatio || 1, quality);
+      renderer.resize(rect.width, rect.height, dpr);
       const dt = Math.min(0.05, Math.max(0.001, (timestamp - last) / 1000));
       last = timestamp;
       const graph = graphRef.current;
@@ -117,11 +149,14 @@ export default function VisualLab() {
         onset: sample.onset || 0,
         onsetHigh: sample.onsetHigh || 0,
         sensitivity: sensitivityRef.current,
+        playing: Boolean(graph && !audioRef.current?.paused),
       };
-      drawVisual(context2d, rect.width, rect.height, modeRef.current, data, visualStates.current[modeRef.current]);
+      data.mood = updateMoodProfile(moodStateRef.current, data);
+      renderer.frame({ ...data, mode: modeRef.current });
       const pulse = Math.max(data.hit, data.hitHigh * 0.7, data.energy * 0.45);
       document.documentElement.style.setProperty('--lab-beat', pulse.toFixed(3));
       if (meterRef.current) meterRef.current.style.transform = `scaleX(${Math.max(0.018, data.energy)})`;
+      if (moodLabelRef.current) moodLabelRef.current.textContent = data.mood.label;
       fpsFrames += 1;
       if (timestamp - fpsTime > 700) {
         if (fpsRef.current) fpsRef.current.textContent = `${Math.round(fpsFrames * 1000 / (timestamp - fpsTime))} FPS`;
@@ -131,7 +166,11 @@ export default function VisualLab() {
       frameId = requestAnimationFrame(render);
     };
     frameId = requestAnimationFrame(render);
-    return () => cancelAnimationFrame(frameId);
+    return () => {
+      cancelAnimationFrame(frameId);
+      renderer.dispose();
+      glRef.current = null;
+    };
   }, []);
 
   useEffect(() => () => {
@@ -154,7 +193,7 @@ export default function VisualLab() {
         <div className="lab-status">
           <span ref={fpsRef}>60 FPS</span>
           <i />
-          <span>LIVE AUDIO / 8 BANDS</span>
+          <span ref={moodLabelRef}>静候播放</span>
         </div>
       </header>
 
@@ -182,8 +221,12 @@ export default function VisualLab() {
       <section className="lab-transport">
         <img src={track.cover} alt="" />
         <div className="lab-track">
-          <label htmlFor="lab-track-select">当前测试音乐</label>
-          <select id="lab-track-select" value={trackIndex} onChange={event => setTrackIndex(Number(event.target.value))}>
+          <div className="lab-track-head">
+            <label htmlFor="lab-track-select">当前测试音乐</label>
+            <label className="lab-import">选择本地慢歌<input type="file" accept="audio/*" onChange={chooseLocalAudio} /></label>
+          </div>
+          <select id="lab-track-select" value={customTrack ? '' : trackIndex} onChange={chooseBuiltInTrack}>
+            {customTrack ? <option value="">本地 · {customTrack.name}</option> : null}
             {tracks.map((item, index) => <option value={index} key={item.id}>{item.title} — {item.artist}</option>)}
           </select>
         </div>
@@ -198,13 +241,13 @@ export default function VisualLab() {
       </section>
 
       <footer className="lab-footer">
-        <span>同一套频段数据 · 四种空间映射</span>
+        <span>WEBGL2 · GPU 光线步进与体积着色</span>
         <span>点击左侧编号切换</span>
       </footer>
       {error ? <div className="lab-error">{error}</div> : null}
       <audio
         ref={audioRef}
-        src={track.src}
+        src={activeSource}
         preload="metadata"
         onPlay={() => setPlaying(true)}
         onPause={() => setPlaying(false)}
