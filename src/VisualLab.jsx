@@ -8,7 +8,7 @@ import './visual-lab.css';
 const MODES = [
   { id: 'veil', index: '01', name: '深海雾幕', en: 'VOLUMETRIC VEIL', note: '多层体积雾随情绪缓慢折叠。慢歌拉长呼吸与余韵，高能段落才提高丝状结构的密度。' },
   { id: 'terrain', index: '02', name: '流体地貌', en: 'LIQUID TOPOGRAPHY', note: '光线步进生成连续地貌。低落时地形宽缓下沉，节奏增强后中心区域产生更清晰的起伏。' },
-  { id: 'rain', index: '03', name: '低频雨场', en: 'BASS WEATHER', note: '持续判断低频能量与占比。低频变厚才开始降雨，每颗雨滴落到水面后都会生成独立涟漪。' },
+  { id: 'rain', index: '03', name: '恒定雨场', en: 'STEADY RAIN', note: '雨滴按稳定频率穿过空间并落入水面。音乐只轻微改变反光，不再突然控制雨量和密度。' },
   { id: 'core', index: '04', name: '情绪内核', en: 'AFFECTIVE CORE', note: '光线步进塑造可呼吸的三维内核。旋律改变表面材质，鼓点只触发短促的形变和余辉。' },
 ];
 

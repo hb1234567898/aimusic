@@ -190,55 +190,67 @@ vec3 renderTerrain(vec2 p) {
   return silver(topGlow * fog, uMood.z * 0.55) + silver(grid * 0.035 * fog, 0.0);
 }
 
-float rainTrigger() {
-  float lowEnergy = (uBandsA.x + uBandsA.y * 0.88 + uBandsA.z * 0.58) / 2.46;
-  float dominance = smoothstep(0.53, 0.72, uWeather.x);
-  float weight = smoothstep(0.08, 0.3, lowEnergy) * dominance;
-  return weight * uWeather.w;
-}
-
-vec3 renderRain(vec2 p, float preview) {
-  float intensity = uMood.x, activity = uMood.y, melancholy = uMood.w;
-  vec3 color = vec3(0.0);
-  float drive = max(rainTrigger(), preview);
-  if (drive < 0.008) return color;
-
-  float horizon = -0.2;
-  float speed = mix(0.16, 0.52, activity) + drive * 0.34;
-  float waterMask = 1.0 - smoothstep(horizon - 0.025, horizon + 0.025, p.y);
+vec3 renderRain(vec2 p, float amount) {
+  float intensity = uMood.x, melancholy = uMood.w;
+  vec3 color = vec3(0.0025, 0.0033, 0.0046) * amount;
+  float waterLine = -0.14;
+  float waterMask = 1.0 - smoothstep(waterLine - 0.015, waterLine + 0.025, p.y);
   float rippleLight = 0.0;
   float rainLight = 0.0;
-  for (int index = 0; index < 28; index++) {
+
+  float distantRain = 0.0;
+  for (int layer = 0; layer < 6; layer++) {
+    float depthLayer = float(layer) / 5.0;
+    vec2 q = p * vec2(mix(5.2, 11.5, depthLayer), mix(3.8, 8.2, depthLayer));
+    q.x += q.y * mix(0.12, 0.2, depthLayer);
+    q.y += uTime * mix(1.05, 2.15, depthLayer);
+    vec2 cellId = floor(q);
+    vec2 cell = fract(q) - 0.5;
+    float randomValue = hash21(cellId + vec2(float(layer) * 9.7, 3.1));
+    cell.x += (randomValue - 0.5) * 0.72;
+    float gate = step(0.57, randomValue);
+    float line = exp(-abs(cell.x) * mix(65.0, 118.0, depthLayer));
+    float shortTail = smoothstep(-0.43, -0.08, cell.y) * (1.0 - smoothstep(-0.045, 0.08, cell.y));
+    float aboveWater = smoothstep(waterLine - 0.08, waterLine + 0.3, p.y);
+    distantRain += line * shortTail * gate * aboveWater * mix(0.028, 0.065, depthLayer);
+  }
+  for (int index = 0; index < 18; index++) {
     float fi = float(index);
     float seed = hash21(vec2(fi * 4.17, fi * 9.31 + 2.4));
-    float phase = fract(uTime * speed * mix(0.72, 1.38, seed) + seed * 8.7);
+    float depth = hash21(vec2(fi * 2.63 + 4.8, fi * 5.21));
+    float phase = fract(uTime * 0.43 + fi / 18.0 + seed * 0.08);
     float lane = mix(-1.8, 1.8, hash21(vec2(fi * 7.3, 1.7)));
-    lane += sin(uTime * 0.09 + fi) * 0.035;
-    float visibleDrop = 1.0 - step(0.82, phase);
-    float fallPhase = min(1.0, phase / 0.82);
-    float dropY = mix(1.22, horizon, fallPhase);
+    float impactY = mix(waterLine - 0.05, -0.78, depth * depth);
+    float visibleDrop = 1.0 - step(0.76, phase);
+    float fallPhase = min(1.0, phase / 0.76);
+    float dropY = mix(1.18, impactY, fallPhase);
     vec2 dropDelta = p - vec2(lane, dropY);
-    float streak = exp(-abs(dropDelta.x) * mix(260.0, 520.0, seed));
-    streak *= smoothstep(0.075, -0.25, dropDelta.y) * smoothstep(-0.34, 0.025, dropDelta.y);
-    float densityGate = step(seed, 0.22 + drive * 0.78);
-    rainLight += streak * visibleDrop * densityGate * (0.1 + drive * 0.34);
+    dropDelta.x += dropDelta.y * 0.055;
+    float streak = exp(-abs(dropDelta.x) * mix(310.0, 540.0, seed));
+    float tail = smoothstep(-0.27, -0.035, dropDelta.y) * (1.0 - smoothstep(-0.015, 0.025, dropDelta.y));
+    float depthFade = mix(0.35, 1.0, depth);
+    rainLight += streak * tail * visibleDrop * depthFade;
 
-    float impactAge = sat((phase - 0.82) / 0.18);
-    vec2 waterDelta = vec2(p.x - lane, (p.y - horizon) * 3.2);
-    float radius = impactAge * mix(0.18, 0.44, seed) * (0.72 + drive * 0.42);
-    float ring = exp(-abs(length(waterDelta) - radius) * 115.0);
-    float echo = exp(-abs(length(waterDelta) - radius * 0.58) * 150.0) * 0.42;
-    rippleLight += (ring + echo) * (1.0 - impactAge) * densityGate * waterMask;
+    float impactAge = sat((phase - 0.76) / 0.24);
+    vec2 waterDelta = vec2(p.x - lane, (p.y - impactY) * mix(4.8, 2.65, depth));
+    float radius = impactAge * mix(0.12, 0.34, depth);
+    float ring = exp(-abs(length(waterDelta) - radius) * mix(155.0, 100.0, depth));
+    float echo = exp(-abs(length(waterDelta) - radius * 0.63) * 145.0) * 0.28;
+    rippleLight += (ring + echo) * (1.0 - impactAge) * waterMask * depthFade;
   }
 
-  float waterNoise = noise2(vec2(p.x * 4.2 + uTime * 0.035, p.y * 18.0));
-  float water = waterMask * (0.007 + waterNoise * 0.012) * drive;
-  float horizonGlow = exp(-abs(p.y - horizon) * 90.0) * drive * 0.055;
-  float impactBoost = 1.0 + max(uAccent.x, uWeather.y * 0.55) * 0.8;
-  color += silver(rainLight + rippleLight * impactBoost * (0.28 + drive * 0.55), uMood.z * 0.35);
-  color += silver(water + horizonGlow, 0.12);
+  float waterNoise = noise2(vec2(p.x * 3.4 + uTime * 0.018, p.y * 15.0));
+  float waterDepth = sat((waterLine - p.y) * 0.72);
+  float fineWave = sin(p.x * 17.0 + p.y * 28.0 + uTime * 0.18 + waterNoise * 3.0);
+  fineWave = pow(max(0.0, fineWave), 9.0) * waterDepth;
+  float water = waterMask * waterDepth * (0.009 + waterNoise * 0.012) + fineWave * 0.012;
+  float horizonGlow = exp(-abs(p.y - waterLine) * 34.0) * 0.026;
+  float musicGlow = 0.82 + intensity * 0.22 + uAccent.x * 0.1;
+  color += silver((distantRain + rainLight * 0.11 + rippleLight * 0.56) * amount * musicGlow, uMood.z * 0.28);
+  color += silver((water + horizonGlow) * amount, 0.1);
   float cloud = fbm2(vec2(p.x * 0.72, p.y * 0.42 + uTime * 0.014));
-  color += silver(cloud * 0.012 * drive * (0.35 + melancholy), 0.1);
+  float mist = exp(-abs(p.y - waterLine) * 2.8) * 0.012;
+  color += silver((cloud * 0.009 * (0.35 + melancholy) + mist) * amount, 0.1);
   return color;
 }
 
@@ -305,9 +317,9 @@ void main() {
   vec3 color;
   if (uMode == 0) color = renderVeil(p);
   else if (uMode == 1) color = renderTerrain(p);
-  else if (uMode == 2) color = renderRain(p, 0.14);
+  else if (uMode == 2) color = renderRain(p, 1.0);
   else color = renderCore(p);
-  if (uMode != 2 && rainTrigger() > 0.008) color += renderRain(p, 0.0) * 0.72;
+  if (uMode != 2 && uWeather.w > 0.5) color += renderRain(p, 0.32);
 
   float vignette = smoothstep(1.42, 0.22, length(p * vec2(0.72, 1.0)));
   color *= 0.54 + vignette * 0.72;
