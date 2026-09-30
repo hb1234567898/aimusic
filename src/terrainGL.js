@@ -181,7 +181,17 @@ void main() {
     highMidLift = uHighMid * highMidRegion * fract(rnd * 7.7) * 2.5;
   }
 
-  float audioElevation = subLift + bassLift + lowMidLift + midLift + highMidLift;
+  // 高频集中驱动中心柱：不同格子使用相位和随机门形成清楚的高低起伏。
+  float highCoreRegion = smoothstep(24.0, 2.0, centerDist);
+  float highCoreBand = uHighMid * 0.65 + uPresence * 0.9 + uBrilliance * 1.15 + uAir * 0.85;
+  float highCoreWave = 0.38 + 0.62 * max(0.0, sin(pos2D.x * 0.34 - pos2D.y * 0.27 + uTime * 3.2 + rnd * 3.0));
+  float highCoreAccent = mix(1.0, 1.75, step(0.86, fract(rnd * 19.7)));
+  float highCoreLift = highCoreBand * highCoreRegion * highCoreWave * highCoreAccent * 3.2;
+
+  // 原生模式把低频交给涟漪，把中心柱的高度交给高频；其余实验模式保留各自频段地貌。
+  float audioElevation = uVariant == 0
+    ? lowMidLift * 0.55 + midLift * 0.65 + highMidLift * 0.35 + highCoreLift
+    : subLift + bassLift + lowMidLift + midLift + highMidLift;
   if (rnd > 0.99) audioElevation += uEnergy * 5.0;
 
   // 实验室变体只重新组织原生频段地形，网格、相机、材质和实例数保持不变。
@@ -282,6 +292,7 @@ precision highp float;
 uniform float uTime;
 uniform float uSubBass;
 uniform float uBass;
+uniform float uHighMid;
 uniform float uPresence;
 uniform float uBrilliance;
 uniform float uAir;
@@ -332,9 +343,13 @@ void main() {
   vec3 brightCool = mix(coolCore, vec3(1.0), 0.24);
   targetGlow = mix(targetGlow, brightCool, uBrightness * 0.6);
   vec3 currentGlow = mix(cBase2, targetGlow, normElevation) * uGlowIntensity * distFade;
-  // 中心低频核心保留独立提亮；外围继续限制白光，避免整个频谱同时过曝。
+  // 高频只在中心核心提亮；外围继续限制白光，避免整个频谱同时过曝。
   float centerFocus = 1.0 - smoothstep(12.0, 32.0, centerDist);
-  float centerPulse = centerFocus * clamp(uSubBass * 0.72 + uBass * 0.48, 0.0, 1.0);
+  float centerPulse = centerFocus * clamp(
+    uHighMid * 0.45 + uPresence * 0.62 + uBrilliance * 0.78 + uAir * 0.62,
+    0.0,
+    1.0
+  );
   currentGlow += vec3(1.0) * centerPulse * 0.16;
   currentGlow = min(currentGlow, vec3(mix(0.82, 0.96, centerPulse)));
   currentGlow = mix(currentGlow, uRippleColor, vRippleAnim.x);
@@ -550,15 +565,15 @@ export function createTerrainGL(canvas, options = {}) {
   gl.uniform1f(U.uGlowIntensity, theme.glow);
   // 0 = 地面贴底；需要整体浮动效果时可以给 options.heightOffset 传正值
   gl.uniform1f(U.uYOffset, options.heightOffset ?? 0);
-  gl.uniform1f(U.uCurvature, options.curvature ?? (mobile ? 0 : 15));
+  gl.uniform1f(U.uCurvature, options.curvature ?? (mobile ? 0 : 11.5));
   gl.uniform1i(U.uVariant, options.variant || 0);
   if (U.uSpectralCentroid) gl.uniform1f(U.uSpectralCentroid, 0.2);
 
   const projection = new Float32Array(16);
   const view = new Float32Array(16);
   // 桌面端改为明显俯视球冠；移动端按既有要求保持原相机和平面。
-  const eye = mobile ? [0, 25.72, 99.62] : [0, 78, 82];
-  const target = mobile ? [0, 0, 0] : [0, -5, 0];
+  const eye = mobile ? [0, 25.72, 99.62] : [0, 46, 100];
+  const target = mobile ? [0, 0, 0] : [0, -4, 0];
   lookAt(view, eye, target, [0, 1, 0]);
   gl.uniformMatrix4fv(U.uView, false, view);
 
@@ -658,7 +673,6 @@ export function createTerrainGL(canvas, options = {}) {
 
     // BeatEngine 已提供快起慢落的低频包络。高频 onset 不再灌进低频地形，
     // 否则军鼓和镲也会把中心整片顶起，与原作的频段分工不一致。
-    const onset = input.onset || 0;
     kick = input.playing ? Math.min(MAX_KICK_DEFORM, Math.max(0, input.kickEnvelope || 0)) : 0;
     const kickNorm = kick / MAX_KICK_DEFORM;
 
@@ -707,12 +721,12 @@ export function createTerrainGL(canvas, options = {}) {
     for (let i = 0; i < 8; i += 1) if (smooth[i] > 0.05) active += 1;
     const density = active / 8;
 
-    // --- 重拍放水波；留 1.1 秒间隔，密集鼓组里不会一圈叠一圈 ---
-    if (options.onsetRipples !== false && input.playing && onset > 0.48 && input.time - lastRippleTime > 0.9) {
+    // --- 只有低频鼓点放水波；高频 onset 不再触发涟漪 ---
+    if (options.onsetRipples !== false && input.playing && kickNorm > 0.46 && input.time - lastRippleTime > 0.9) {
       lastRippleTime = input.time;
       const angle = Math.random() * Math.PI * 2;
       const radius = Math.random() * 20;
-      addRipple(Math.cos(angle) * radius, Math.sin(angle) * radius, Math.min(onset * 2, 2), 0);
+      addRipple(Math.cos(angle) * radius, Math.sin(angle) * radius, Math.min(kickNorm * 1.7, 1.8), 0);
     }
     const rippleInterval = Number(options.rippleInterval) || 0;
     if (input.playing && rippleInterval > 0 && input.time - lastAmbientRippleTime >= rippleInterval) {
