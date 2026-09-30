@@ -500,6 +500,8 @@ function compile(gl, type, source) {
 export function createTerrainGL(canvas, options = {}) {
   const theme = TERRAIN_THEMES[options.theme] || TERRAIN_THEMES['minimal-monochrome'];
   const mobile = !!options.mobile;
+  const variant = options.variant || 0;
+  const desktopHeightGain = !mobile && variant === 0 ? (options.desktopHeightGain ?? 1.24) : 1;
   // 移动端 GPU 弱，网格砍到 110（12100 个方块），桌面保持对方的 155（24025 个）
   const gridSize = options.gridSize || (mobile ? 110 : 155);
 
@@ -566,7 +568,7 @@ export function createTerrainGL(canvas, options = {}) {
   // 0 = 地面贴底；需要整体浮动效果时可以给 options.heightOffset 传正值
   gl.uniform1f(U.uYOffset, options.heightOffset ?? 0);
   gl.uniform1f(U.uCurvature, options.curvature ?? (mobile ? 0 : 11.5));
-  gl.uniform1i(U.uVariant, options.variant || 0);
+  gl.uniform1i(U.uVariant, variant);
   if (U.uSpectralCentroid) gl.uniform1f(U.uSpectralCentroid, 0.2);
 
   const projection = new Float32Array(16);
@@ -764,7 +766,7 @@ export function createTerrainGL(canvas, options = {}) {
     gl.uniform1f(U.uSmoothness, smoothness);
     gl.uniform1f(U.uDensity, density);
     gl.uniform1f(U.uEnergy, clamp01(input.energy || 0));
-    gl.uniform1f(U.uAmplitude, (options.amplitude || 1) * (input.sensitivity || 1));
+    gl.uniform1f(U.uAmplitude, (options.amplitude || 1) * desktopHeightGain * (input.sensitivity || 1));
     gl.uniform4fv(U.uRipples, rippleData);
     gl.uniform2fv(U.uRippleMeta, rippleMeta);
 
