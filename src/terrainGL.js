@@ -91,6 +91,7 @@ uniform float uDensity;
 uniform float uEnergy;
 uniform float uAmplitude;
 uniform float uYOffset;   // 整片地形在画面里整体上移的世界单位
+uniform float uCurvature; // 球面边缘相对中心下沉的世界单位
 uniform vec4 uRipples[10];     // xz = 圆心, z = 起始时间, w = 强度
 uniform vec2 uRippleMeta[10];  // x = isActive, y = rippleType
 uniform float uGridSize;
@@ -260,10 +261,15 @@ void main() {
   vRelativeY = yPos;
   float totalHeight = 1.0 + elevation;
 
+  // 把规则平面压成连续的浅球冠：中心最高，四周沿半径平滑下沉。
+  // 音柱继续沿世界 Y 轴生长，因此顶面高度仍能准确表达频段能量。
+  float curveT = clamp(centerDist / 84.0, 0.0, 1.0);
+  float surfaceCurve = -uCurvature * curveT * curveT;
+
   // 等价于 instanceMatrix = T(pos2D) * S(boxWidth, 1, boxWidth)，modelMatrix 为单位阵
   vec3 world = vec3(
     pos2D.x + aPosition.x * uBoxWidth,
-    -0.5 + yPos * totalHeight + uYOffset,
+    surfaceCurve - 0.5 + yPos * totalHeight + uYOffset,
     pos2D.y + aPosition.z * uBoxWidth
   );
   gl_Position = uProjection * uView * vec4(world, 1.0);
@@ -274,6 +280,8 @@ const FRAG = `#version 300 es
 precision highp float;
 
 uniform float uTime;
+uniform float uSubBass;
+uniform float uBass;
 uniform float uPresence;
 uniform float uBrilliance;
 uniform float uAir;
@@ -324,8 +332,11 @@ void main() {
   vec3 brightCool = mix(coolCore, vec3(1.0), 0.24);
   targetGlow = mix(targetGlow, brightCool, uBrightness * 0.6);
   vec3 currentGlow = mix(cBase2, targetGlow, normElevation) * uGlowIntensity * distFade;
-  // 从 a35a096 的原版材质出发，只截断常态白光峰值，保留原有灰白层次。
-  currentGlow = min(currentGlow, vec3(0.82));
+  // 中心低频核心保留独立提亮；外围继续限制白光，避免整个频谱同时过曝。
+  float centerFocus = 1.0 - smoothstep(12.0, 32.0, centerDist);
+  float centerPulse = centerFocus * clamp(uSubBass * 0.72 + uBass * 0.48, 0.0, 1.0);
+  currentGlow += vec3(1.0) * centerPulse * 0.16;
+  currentGlow = min(currentGlow, vec3(mix(0.82, 0.96, centerPulse)));
   currentGlow = mix(currentGlow, uRippleColor, vRippleAnim.x);
   currentGlow = mix(currentGlow, vec3(1.0), vRippleAnim.y);
 
@@ -344,8 +355,9 @@ void main() {
     float verticalFalloff = mix(1.0, 3.0, uSharpness);
     float sideGlow = smoothstep(0.5 / verticalFalloff, 0.0, distFromTop) * normElevation;
     if (normElevation < 0.02) sideGlow = 0.0;
-    // 原版乘数为 1.5；减半但不改变原来的受光范围和颜色。
-    finalColor = mix(bodyColor, currentGlow, sideGlow * 0.72);
+    // 中心低频柱恢复接近原版的侧面亮度，外围仍保持削弱后的强度。
+    float sideLightStrength = mix(0.72, 0.96, centerPulse);
+    finalColor = mix(bodyColor, currentGlow, min(1.0, sideGlow * sideLightStrength));
     float rimGlow = smoothstep(0.03, 0.0, distFromTop) * normElevation;
     finalColor += currentGlow * rimGlow * 0.45;
   }
@@ -520,7 +532,7 @@ export function createTerrainGL(canvas, options = {}) {
     'uSmoothness', 'uDensity', 'uSpectralCentroid', 'uEnergy', 'uAmplitude',
     'uBaseColor1', 'uBaseColor2', 'uFogColor', 'uCoolCore', 'uCoolEdge',
     'uWarmCore', 'uWarmEdge', 'uRippleColor', 'uGlowIntensity',
-    'uGridSize', 'uSpacing', 'uBoxWidth', 'uProjection', 'uView', 'uYOffset', 'uVariant'
+    'uGridSize', 'uSpacing', 'uBoxWidth', 'uProjection', 'uView', 'uYOffset', 'uCurvature', 'uVariant'
   ];
   uniformNames.forEach(n => { U[n] = gl.getUniformLocation(program, n); });
   U.uRipples = gl.getUniformLocation(program, 'uRipples[0]');
@@ -538,14 +550,16 @@ export function createTerrainGL(canvas, options = {}) {
   gl.uniform1f(U.uGlowIntensity, theme.glow);
   // 0 = 地面贴底；需要整体浮动效果时可以给 options.heightOffset 传正值
   gl.uniform1f(U.uYOffset, options.heightOffset ?? 0);
+  gl.uniform1f(U.uCurvature, options.curvature ?? (mobile ? 0 : 15));
   gl.uniform1i(U.uVariant, options.variant || 0);
   if (U.uSpectralCentroid) gl.uniform1f(U.uSpectralCentroid, 0.2);
 
   const projection = new Float32Array(16);
   const view = new Float32Array(16);
-  // 保留原作的距离和俯视角，只把 X 偏移归零，使地形在播放器中保持居中。
-  const eye = mobile ? [0, 25.72, 99.62] : [0, 25.718921, 99.618];
-  lookAt(view, eye, [0, 0, 0], [0, 1, 0]);
+  // 桌面端改为明显俯视球冠；移动端按既有要求保持原相机和平面。
+  const eye = mobile ? [0, 25.72, 99.62] : [0, 78, 82];
+  const target = mobile ? [0, 0, 0] : [0, -5, 0];
+  lookAt(view, eye, target, [0, 1, 0]);
   gl.uniformMatrix4fv(U.uView, false, view);
 
   const rippleData = new Float32Array(MAX_RIPPLES * 4);   // x, z, 起始时间, 强度
