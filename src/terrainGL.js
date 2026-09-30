@@ -324,40 +324,35 @@ void main() {
   vec3 brightCool = mix(coolCore, vec3(1.0), 0.24);
   targetGlow = mix(targetGlow, brightCool, uBrightness * 0.6);
   vec3 currentGlow = mix(cBase2, targetGlow, normElevation) * uGlowIntensity * distFade;
+  // 从 a35a096 的原版材质出发，只截断常态白光峰值，保留原有灰白层次。
+  currentGlow = min(currentGlow, vec3(0.82));
   currentGlow = mix(currentGlow, uRippleColor, vRippleAnim.x);
   currentGlow = mix(currentGlow, vec3(1.0), vRippleAnim.y);
 
-  vec3 restrainedGlow = min(currentGlow, vec3(0.72));
-  vec3 glassTint = mix(vec3(0.24), restrainedGlow, 0.7);
+  vec3 bodyColor = mix(cBase1, cBase2, vRelativeY * distFade);
   vec3 finalColor;
-  float materialAlpha;
 
   if (isTop) {
     float topIntensity = smoothstep(0.0, 0.4, normElevation);
-    // 顶面保留发光信息，但压住白色峰值，避免高柱连成一片过曝的白墙。
-    finalColor = mix(glassTint * 0.82, restrainedGlow * 0.88, topIntensity);
+    finalColor = mix(cBase2, currentGlow, topIntensity);
     float edgeX = smoothstep(0.05, 0.01, vUv.x) + smoothstep(0.95, 0.99, vUv.x);
     float edgeY = smoothstep(0.05, 0.01, vUv.y) + smoothstep(0.95, 0.99, vUv.y);
     float edge = min(edgeX + edgeY, 1.0);
-    finalColor += restrainedGlow * edge * 0.08 * topIntensity;
-
-    materialAlpha = mix(0.7, 0.84, topIntensity);
+    // 原版为 0.8；降低描边叠加，减少大量顶面同时变纯白。
+    finalColor += currentGlow * edge * 0.36 * (topIntensity + 0.3);
   } else {
-    // 整个柱身使用灰白玻璃色，不再用深色实体填充。
-    float upperSideLight = smoothstep(0.34, 0.015, distFromTop) * normElevation;
-    finalColor = mix(glassTint * 0.75, restrainedGlow * 0.82, upperSideLight * 0.38);
-    float topRim = smoothstep(0.035, 0.0, distFromTop) * normElevation;
-    finalColor += restrainedGlow * topRim * 0.1;
-
-    // 所有柱面都保持透明，靠近顶面只略微增加玻璃密度。
-    float heightOpacity = mix(0.3, 0.56, smoothstep(0.0, 0.9, vRelativeY));
-    materialAlpha = heightOpacity + upperSideLight * 0.12 + topRim * 0.08;
+    float verticalFalloff = mix(1.0, 3.0, uSharpness);
+    float sideGlow = smoothstep(0.5 / verticalFalloff, 0.0, distFromTop) * normElevation;
+    if (normElevation < 0.02) sideGlow = 0.0;
+    // 原版乘数为 1.5；减半但不改变原来的受光范围和颜色。
+    finalColor = mix(bodyColor, currentGlow, sideGlow * 0.72);
+    float rimGlow = smoothstep(0.03, 0.0, distFromTop) * normElevation;
+    finalColor += currentGlow * rimGlow * 0.45;
   }
 
-  // 涟漪沿用原版的亮度与覆盖范围，经过时暂时提高透明玻璃的可见度。
+  // 涟漪完全沿用原版。
   finalColor += uRippleColor * vRippleAnim.x * 0.6;
   finalColor += vec3(1.0) * vRippleAnim.y * 1.2;
-  materialAlpha += vRippleAnim.x * 0.28 + vRippleAnim.y * 0.35;
 
   // 空气透视
   float aerialFog = smoothstep(30.0, 65.0, vDistance);
@@ -368,7 +363,7 @@ void main() {
   float alphaFade = 1.0 - smoothstep(55.0, 78.0, vDistance);
   float alphaBlend = 1.0 - alphaFade;
   finalColor = mix(finalColor, uFogColor, alphaBlend * 0.45);
-  fragColor = vec4(finalColor, alphaFade * clamp(materialAlpha, 0.12, 0.96));
+  fragColor = vec4(finalColor, alphaFade);
 }
 `;
 
