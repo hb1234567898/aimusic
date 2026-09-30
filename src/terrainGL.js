@@ -24,6 +24,18 @@ export const TERRAIN_THEMES = {
     warmCore: [1, 1, 1], warmEdge: [0.7, 0.7, 0.7],
     ripple: [1, 1, 1], glow: 0.8
   },
+  'soft-graphite': {
+    base1: [0.025, 0.027, 0.032], base2: [0.095, 0.1, 0.112], fog: [0.012, 0.014, 0.018],
+    coolCore: [0.78, 0.82, 0.88], coolEdge: [0.3, 0.33, 0.38],
+    warmCore: [0.96, 0.94, 0.9], warmEdge: [0.58, 0.56, 0.52],
+    ripple: [0.9, 0.94, 1], glow: 0.72
+  },
+  'high-contrast': {
+    base1: [0.018, 0.018, 0.02], base2: [0.085, 0.085, 0.09], fog: [0.008, 0.008, 0.01],
+    coolCore: [1, 1, 1], coolEdge: [0.48, 0.48, 0.52],
+    warmCore: [1, 1, 1], warmEdge: [0.72, 0.72, 0.74],
+    ripple: [1, 1, 1], glow: 1.05
+  },
   'ink-wash': {
     base1: [1, 1, 1], base2: [1, 1, 1], fog: [1, 1, 1],
     coolCore: [0, 0, 0], coolEdge: [0.35, 0.35, 0.35],
@@ -497,6 +509,8 @@ export function createTerrainGL(canvas, options = {}) {
   const rippleMeta = new Float32Array(MAX_RIPPLES * 2);   // isActive, rippleType
   let rippleCursor = 0;
   let lastRippleTime = -99;
+  let lastAmbientRippleTime = -99;
+  let ambientRippleCursor = 0;
 
   // 每段的平滑值 / 上一帧频谱（算频谱通量用）
   const smooth = new Float32Array(8);
@@ -637,11 +651,24 @@ export function createTerrainGL(canvas, options = {}) {
     const density = active / 8;
 
     // --- 重拍放水波；留 1.1 秒间隔，密集鼓组里不会一圈叠一圈 ---
-    if (input.playing && onset > 0.48 && input.time - lastRippleTime > 0.9) {
+    if (options.onsetRipples !== false && input.playing && onset > 0.48 && input.time - lastRippleTime > 0.9) {
       lastRippleTime = input.time;
       const angle = Math.random() * Math.PI * 2;
       const radius = Math.random() * 20;
       addRipple(Math.cos(angle) * radius, Math.sin(angle) * radius, Math.min(onset * 2, 2), 0);
+    }
+    const rippleInterval = Number(options.rippleInterval) || 0;
+    if (input.playing && rippleInterval > 0 && input.time - lastAmbientRippleTime >= rippleInterval) {
+      lastAmbientRippleTime = input.time;
+      const sequence = ambientRippleCursor++;
+      const angle = sequence * 2.3999632297;
+      const radius = 8 + ((sequence * 11) % 23);
+      addRipple(
+        Math.cos(angle) * radius,
+        Math.sin(angle) * radius,
+        options.rippleStrength ?? 0.82,
+        options.rippleType ?? 1
+      );
     }
     // 清掉过期的水波
     for (let i = 0; i < MAX_RIPPLES; i += 1) {
@@ -666,7 +693,7 @@ export function createTerrainGL(canvas, options = {}) {
     gl.uniform1f(U.uSmoothness, smoothness);
     gl.uniform1f(U.uDensity, density);
     gl.uniform1f(U.uEnergy, clamp01(input.energy || 0));
-    gl.uniform1f(U.uAmplitude, options.amplitude || 1);
+    gl.uniform1f(U.uAmplitude, (options.amplitude || 1) * (input.sensitivity || 1));
     gl.uniform4fv(U.uRipples, rippleData);
     gl.uniform2fv(U.uRippleMeta, rippleMeta);
 

@@ -2,14 +2,14 @@ import React, { useEffect, useRef, useState } from 'react';
 import { BeatEngine } from './beatEngine.js';
 import { tracks } from './tracks.js';
 import { createMoodState, readBands, updateMoodProfile } from './visualLabRenderer.js';
-import { createVisualLabGL } from './visualLabGL.js';
+import { createTerrainGL } from './terrainGL.js';
 import './visual-lab.css';
 
 const MODES = [
-  { id: 'veil', index: '01', name: '深海雾幕', en: 'VOLUMETRIC VEIL', note: '多层体积雾随情绪缓慢折叠。慢歌拉长呼吸与余韵，高能段落才提高丝状结构的密度。' },
-  { id: 'terrain', index: '02', name: '流体地貌', en: 'LIQUID TOPOGRAPHY', note: '光线步进生成连续地貌。低落时地形宽缓下沉，节奏增强后中心区域产生更清晰的起伏。' },
-  { id: 'rain', index: '03', name: '恒定雨场', en: 'STEADY RAIN', note: '雨滴按稳定频率穿过空间并落入水面。音乐只轻微改变反光，不再突然控制雨量和密度。' },
-  { id: 'core', index: '04', name: '情绪内核', en: 'AFFECTIVE CORE', note: '光线步进塑造可呼吸的三维内核。旋律改变表面材质，鼓点只触发短促的形变和余辉。' },
+  { id: 'native', index: '01', name: '原生地形', en: 'SONIC TOPOGRAPHY', note: '直接复用播放器的 24,025 根实例音柱、八频段地形模型和原作相机，不做简化。', terrain: { theme: 'minimal-monochrome', amplitude: 1 } },
+  { id: 'tide', index: '02', name: '缓潮地形', en: 'SLOW TIDE', note: '保留原生音柱与透视，把整体振幅压低，并用稳定的宽波纹承接舒缓和低落段落。', terrain: { theme: 'soft-graphite', amplitude: 0.72, rippleInterval: 1.8, rippleStrength: 0.72, rippleType: 0, onsetRipples: false } },
+  { id: 'impact', index: '03', name: '节拍波阵', en: 'IMPACT FIELD', note: '固定间隔向原生地形注入落点，波前沿音柱传播；音乐仍负责地形高度和频段分区。', terrain: { theme: 'minimal-monochrome', amplitude: 0.96, rippleInterval: 0.72, rippleStrength: 0.9, rippleType: 1, onsetRipples: false } },
+  { id: 'peaks', index: '04', name: '峰值矩阵', en: 'PEAK MATRIX', note: '提高原生地形的频段振幅和明暗反差，让重拍、低频核心与高频尖柱更直接。', terrain: { theme: 'high-contrast', amplitude: 1.32 } },
 ];
 
 export default function VisualLab() {
@@ -17,14 +17,13 @@ export default function VisualLab() {
   const audioRef = useRef(null);
   const graphRef = useRef(null);
   const glRef = useRef(null);
-  const modeRef = useRef('veil');
   const sensitivityRef = useRef(1);
   const meterRef = useRef(null);
   const fpsRef = useRef(null);
   const moodLabelRef = useRef(null);
   const moodStateRef = useRef(createMoodState());
   const customUrlRef = useRef('');
-  const [mode, setMode] = useState('veil');
+  const [mode, setMode] = useState('native');
   const [trackIndex, setTrackIndex] = useState(0);
   const [customTrack, setCustomTrack] = useState(null);
   const [playing, setPlaying] = useState(false);
@@ -35,8 +34,28 @@ export default function VisualLab() {
   const track = tracks[trackIndex] || tracks[0];
   const activeSource = customTrack?.url || track.src;
 
-  useEffect(() => { modeRef.current = mode; }, [mode]);
   useEffect(() => { sensitivityRef.current = sensitivity; }, [sensitivity]);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    const profile = MODES.find(item => item.id === mode) || MODES[0];
+    let renderer = null;
+    try {
+      renderer = createTerrainGL(canvas, {
+        mobile: window.innerWidth < 760,
+        ...profile.terrain,
+      });
+      if (!renderer) throw new Error('当前设备不支持 WebGL2');
+      glRef.current = renderer;
+      setError('');
+    } catch (reason) {
+      setError(reason?.message || '声波地形初始化失败');
+    }
+    return () => {
+      renderer?.dispose();
+      if (glRef.current === renderer) glRef.current = null;
+    };
+  }, [mode]);
 
   useEffect(() => {
     const audio = audioRef.current;
@@ -105,23 +124,13 @@ export default function VisualLab() {
 
   useEffect(() => {
     const canvas = canvasRef.current;
-    let renderer;
-    try {
-      renderer = createVisualLabGL(canvas);
-      glRef.current = renderer;
-    } catch (reason) {
-      setError(reason?.message || 'WebGL2 初始化失败');
-      return undefined;
-    }
     let frameId = 0;
     let last = performance.now();
     let fpsTime = last;
     let fpsFrames = 0;
     const render = timestamp => {
       const rect = canvas.getBoundingClientRect();
-      const quality = rect.width < 760 ? 0.78 : 0.72;
-      const dpr = Math.min(window.devicePixelRatio || 1, quality);
-      renderer.resize(rect.width, rect.height, dpr);
+      const dpr = Math.min(window.devicePixelRatio || 1, rect.width < 760 ? 0.9 : 1);
       const dt = Math.min(0.05, Math.max(0.001, (timestamp - last) / 1000));
       last = timestamp;
       const graph = graphRef.current;
@@ -152,7 +161,23 @@ export default function VisualLab() {
         playing: Boolean(graph && !audioRef.current?.paused),
       };
       data.mood = updateMoodProfile(moodStateRef.current, data);
-      renderer.frame({ ...data, mode: modeRef.current });
+      const renderer = glRef.current;
+      if (renderer) {
+        renderer.resize(rect.width, rect.height, dpr);
+        renderer.frame({
+          time,
+          dt,
+          bins,
+          sampleRate,
+          energy: data.energy,
+          kickEnvelope: data.hit,
+          onset: data.onset,
+          onsetHigh: data.onsetHigh,
+          playing: data.playing,
+          interacting: false,
+          sensitivity: sensitivityRef.current,
+        });
+      }
       const pulse = Math.max(data.hit, data.hitHigh * 0.7, data.energy * 0.45);
       document.documentElement.style.setProperty('--lab-beat', pulse.toFixed(3));
       if (meterRef.current) meterRef.current.style.transform = `scaleX(${Math.max(0.018, data.energy)})`;
@@ -166,11 +191,7 @@ export default function VisualLab() {
       frameId = requestAnimationFrame(render);
     };
     frameId = requestAnimationFrame(render);
-    return () => {
-      cancelAnimationFrame(frameId);
-      renderer.dispose();
-      glRef.current = null;
-    };
+    return () => cancelAnimationFrame(frameId);
   }, []);
 
   useEffect(() => () => {
@@ -241,7 +262,7 @@ export default function VisualLab() {
       </section>
 
       <footer className="lab-footer">
-        <span>WEBGL2 · GPU 光线步进与体积着色</span>
+        <span>WEBGL2 · 24,025 INSTANCED COLUMNS</span>
         <span>点击左侧编号切换</span>
       </footer>
       {error ? <div className="lab-error">{error}</div> : null}
