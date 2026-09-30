@@ -1488,7 +1488,7 @@ function Universe({ current, playing, currentTime, duration, onSelect, zoom, bac
         }
         // 播放时当前卡片保持突出，其余卡片只降低不透明度并保留原有景深，
         // 让用户仍能看见完整的歌曲球面分布。
-        if (isPlaying && !revealingCards) alpha = active ? 0.86 : 0.08 + alpha * 0.16;
+        if (isPlaying && !revealingCards) alpha = active ? 0.74 : 0.08 + alpha * 0.16;
         setStyle('opacity', alpha.toFixed(3));
         setStyle('visibility', (!active && !isPlaying && fade <= 0.002) ? 'hidden' : 'visible');
         const brightFloor = gpuBackdrop ? (mobile ? 0.55 : 0.62) : (mobile ? 0.4 : 0.45);
@@ -1700,7 +1700,6 @@ function Universe({ current, playing, currentTime, duration, onSelect, zoom, bac
             }}
           >
             <LiquidArt src={track.cover} className="card-art" />
-            <span className="number">ORBIT · {String(track.id + 1).padStart(2, '0')}</span>
             <span className="card-play"><Icon name="play" /></span>
             <span className="caption"><strong>{track.title}</strong><CardArtistTicker artist={track.artist || '未知歌手'} /></span>
           </button>
