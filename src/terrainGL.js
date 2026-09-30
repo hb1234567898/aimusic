@@ -83,6 +83,9 @@ uniform float uBass;
 uniform float uLowMid;
 uniform float uMid;
 uniform float uHighMid;
+uniform float uPresence;
+uniform float uBrilliance;
+uniform float uAir;
 uniform float uSmoothness;
 uniform float uDensity;
 uniform float uEnergy;
@@ -93,6 +96,7 @@ uniform vec2 uRippleMeta[10];  // x = isActive, y = rippleType
 uniform float uGridSize;
 uniform float uSpacing;
 uniform float uBoxWidth;
+uniform int uVariant;
 uniform mat4 uProjection;
 uniform mat4 uView;
 
@@ -178,6 +182,39 @@ void main() {
 
   float audioElevation = subLift + bassLift + lowMidLift + midLift + highMidLift;
   if (rnd > 0.99) audioElevation += uEnergy * 5.0;
+
+  // 实验室变体只重新组织原生频段地形，网格、相机、材质和实例数保持不变。
+  if (uVariant == 1) {
+    // 环形潮汐：低频形成缓慢呼吸的环形山，中心留出低洼盆地。
+    float ringRadius = 23.0 + sin(uTime * 0.32) * 2.4;
+    float ringProfile = exp(-pow((centerDist - ringRadius) / 7.2, 2.0));
+    float innerBasin = smoothstep(17.0, 0.0, centerDist);
+    float angularFlow = 0.72 + 0.28 * sin(atan(pos2D.y, pos2D.x) * 6.0 - uTime * 0.7);
+    float ringAudio = ringProfile * angularFlow * (uSubBass * 5.8 + uBass * 4.6 + uLowMid * 1.8);
+    audioElevation = audioElevation * 0.22 + ringAudio + innerBasin * uLowMid * 1.2;
+    idleElevation = idleElevation * 0.56 + ringProfile * 0.34;
+  } else if (uVariant == 2) {
+    // 声谱峡谷：低频抬起左右两道墙，中高频沿中央河道向镜头传播。
+    float sideDistance = abs(pos2D.x);
+    float wall = exp(-pow((sideDistance - 18.0) / 7.4, 2.0));
+    float valley = exp(-pow(sideDistance / 8.2, 2.0));
+    float depthFade = smoothstep(68.0, 18.0, abs(pos2D.y));
+    float flow = max(0.0, sin(pos2D.y * 0.17 - uTime * 1.65 + snoise(pos2D * 0.045) * 1.6));
+    float wallAudio = wall * (uSubBass * 4.8 + uBass * 4.2 + uLowMid * 2.1);
+    float riverAudio = valley * flow * (uMid * 4.5 + uHighMid * 2.4 + uPresence * 1.5);
+    audioElevation = audioElevation * 0.18 + (wallAudio + riverAudio) * depthFade;
+    idleElevation = idleElevation * 0.46 + wall * depthFade * 0.27 + valley * flow * 0.12;
+  } else if (uVariant == 3) {
+    // 峰值矩阵：中频沿两组对角波阵推进，高频在交点产生稀疏尖柱。
+    float diagonalA = max(0.0, sin((pos2D.x + pos2D.y) * 0.16 - uTime * 1.7));
+    float diagonalB = max(0.0, sin((pos2D.x - pos2D.y) * 0.13 + uTime * 1.25));
+    float waveField = pow(max(diagonalA, diagonalB * 0.82), 2.4);
+    float peakGate = step(0.84, fract(rnd * 17.31 + floor((pos2D.x + pos2D.y) * 0.08) * 0.17));
+    float matrixLift = waveField * (uBass * 2.0 + uLowMid * 3.2 + uMid * 3.8);
+    float spectralPeak = peakGate * (uHighMid * 3.2 + uPresence * 3.6 + uBrilliance * 4.0 + uAir * 2.5);
+    audioElevation = audioElevation * 0.38 + matrixLift + spectralPeak;
+    idleElevation = idleElevation * 0.58 + waveField * 0.18;
+  }
   audioElevation *= globalFalloff;
   audioElevation = max(0.0, audioElevation - 0.2) * uAmplitude;
 
@@ -478,7 +515,7 @@ export function createTerrainGL(canvas, options = {}) {
     'uSmoothness', 'uDensity', 'uSpectralCentroid', 'uEnergy', 'uAmplitude',
     'uBaseColor1', 'uBaseColor2', 'uFogColor', 'uCoolCore', 'uCoolEdge',
     'uWarmCore', 'uWarmEdge', 'uRippleColor', 'uGlowIntensity',
-    'uGridSize', 'uSpacing', 'uBoxWidth', 'uProjection', 'uView', 'uYOffset'
+    'uGridSize', 'uSpacing', 'uBoxWidth', 'uProjection', 'uView', 'uYOffset', 'uVariant'
   ];
   uniformNames.forEach(n => { U[n] = gl.getUniformLocation(program, n); });
   U.uRipples = gl.getUniformLocation(program, 'uRipples[0]');
@@ -496,6 +533,7 @@ export function createTerrainGL(canvas, options = {}) {
   gl.uniform1f(U.uGlowIntensity, theme.glow);
   // 0 = 地面贴底；需要整体浮动效果时可以给 options.heightOffset 传正值
   gl.uniform1f(U.uYOffset, options.heightOffset ?? 0);
+  gl.uniform1i(U.uVariant, options.variant || 0);
   if (U.uSpectralCentroid) gl.uniform1f(U.uSpectralCentroid, 0.2);
 
   const projection = new Float32Array(16);

@@ -7,9 +7,9 @@ import './visual-lab.css';
 
 const MODES = [
   { id: 'native', index: '01', name: '原生地形', en: 'SONIC TOPOGRAPHY', note: '直接复用播放器的 24,025 根实例音柱、八频段地形模型和原作相机，不做简化。', terrain: { theme: 'minimal-monochrome', amplitude: 1 } },
-  { id: 'tide', index: '02', name: '缓潮地形', en: 'SLOW TIDE', note: '保留原生音柱与透视，把整体振幅压低，并用稳定的宽波纹承接舒缓和低落段落。', terrain: { theme: 'soft-graphite', amplitude: 0.72, rippleInterval: 1.8, rippleStrength: 0.72, rippleType: 0, onsetRipples: false } },
-  { id: 'impact', index: '03', name: '节拍波阵', en: 'IMPACT FIELD', note: '固定间隔向原生地形注入落点，波前沿音柱传播；音乐仍负责地形高度和频段分区。', terrain: { theme: 'minimal-monochrome', amplitude: 0.96, rippleInterval: 0.72, rippleStrength: 0.9, rippleType: 1, onsetRipples: false } },
-  { id: 'peaks', index: '04', name: '峰值矩阵', en: 'PEAK MATRIX', note: '提高原生地形的频段振幅和明暗反差，让重拍、低频核心与高频尖柱更直接。', terrain: { theme: 'high-contrast', amplitude: 1.32 } },
+  { id: 'tide', index: '02', name: '环形潮汐', en: 'ORBITAL BASIN', note: '低频从中心山体改造成环形山与低洼盆地，环面会缓慢呼吸和旋转，适合舒缓段落。', terrain: { variant: 1, theme: 'soft-graphite', amplitude: 0.92, rippleInterval: 2.2, rippleStrength: 0.62, rippleType: 0, onsetRipples: false } },
+  { id: 'rift', index: '03', name: '声谱峡谷', en: 'SPECTRAL RIFT', note: '低频抬起左右两道峡谷墙，中高频沿中央河道朝镜头推进，仍由真实八频段驱动。', terrain: { variant: 2, theme: 'minimal-monochrome', amplitude: 1.02 } },
+  { id: 'peaks', index: '04', name: '峰值矩阵', en: 'PEAK MATRIX', note: '两组对角波阵在地形中交叉推进，高频只在交点形成稀疏尖柱，重拍保留原生冲击。', terrain: { variant: 3, theme: 'high-contrast', amplitude: 1.12 } },
 ];
 
 export default function VisualLab() {
