@@ -328,26 +328,30 @@ void main() {
   currentGlow = mix(currentGlow, vec3(1.0), vRippleAnim.y);
 
   vec3 bodyColor = mix(cBase1, cBase2, vRelativeY * distFade);
+  vec3 restrainedGlow = min(currentGlow, vec3(0.58));
   vec3 finalColor;
 
   if (isTop) {
     float topIntensity = smoothstep(0.0, 0.4, normElevation);
-    finalColor = mix(cBase2, currentGlow, topIntensity);
+    // 顶面保留发光信息，但压住白色峰值，避免高柱连成一片过曝的白墙。
+    finalColor = mix(cBase2 * 0.62, restrainedGlow * 0.76, topIntensity);
     float edgeX = smoothstep(0.05, 0.01, vUv.x) + smoothstep(0.95, 0.99, vUv.x);
     float edgeY = smoothstep(0.05, 0.01, vUv.y) + smoothstep(0.95, 0.99, vUv.y);
     float edge = min(edgeX + edgeY, 1.0);
-    finalColor += currentGlow * edge * 0.8 * (topIntensity + 0.3);
-  } else {
-    float verticalFalloff = mix(1.0, 3.0, uSharpness);
-    float sideGlow = smoothstep(0.5 / verticalFalloff, 0.0, distFromTop) * normElevation;
-    if (normElevation < 0.02) sideGlow = 0.0;
-    finalColor = mix(bodyColor, currentGlow, sideGlow * 1.5);
-    float rimGlow = smoothstep(0.03, 0.0, distFromTop) * normElevation;
-    finalColor += currentGlow * rimGlow;
-  }
+    finalColor += restrainedGlow * edge * 0.08 * topIntensity;
 
-  finalColor += uRippleColor * vRippleAnim.x * 0.6;
-  finalColor += vec3(1.0) * vRippleAnim.y * 1.2;
+    // 波纹只点亮顶面；柱身继续作为暗色地形轮廓存在。
+    finalColor += uRippleColor * vRippleAnim.x * 0.22;
+    finalColor += vec3(1.0) * vRippleAnim.y * 0.34;
+  } else {
+    // 柱身上段保留少量受光，向下快速衰减；能读出立体感，但不会整根发白。
+    float sideShade = mix(0.55, 0.78, vRelativeY);
+    finalColor = bodyColor * sideShade;
+    float upperSideLight = smoothstep(0.34, 0.015, distFromTop) * normElevation;
+    finalColor = mix(finalColor, restrainedGlow * 0.62, upperSideLight * 0.34);
+    float topRim = smoothstep(0.035, 0.0, distFromTop) * normElevation;
+    finalColor += restrainedGlow * topRim * 0.1;
+  }
 
   // 空气透视
   float aerialFog = smoothstep(30.0, 65.0, vDistance);
