@@ -565,8 +565,8 @@ export function createTerrainGL(canvas, options = {}) {
   gl.uniform3fv(U.uWarmEdge, theme.warmEdge);
   gl.uniform3fv(U.uRippleColor, theme.ripple);
   gl.uniform1f(U.uGlowIntensity, theme.glow);
-  // 0 = 地面贴底；需要整体浮动效果时可以给 options.heightOffset 传正值
-  gl.uniform1f(U.uYOffset, options.heightOffset ?? 0);
+  // PC 地形整体抬高，避免音柱主体被底部播放栏和卡片遮住；移动端保持原位置。
+  gl.uniform1f(U.uYOffset, options.heightOffset ?? (mobile ? 0 : 6.5));
   gl.uniform1f(U.uCurvature, options.curvature ?? (mobile ? 0 : 11.5));
   gl.uniform1i(U.uVariant, variant);
   if (U.uSpectralCentroid) gl.uniform1f(U.uSpectralCentroid, 0.2);
