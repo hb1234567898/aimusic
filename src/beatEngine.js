@@ -178,7 +178,10 @@ export class BeatEngine {
     this.level = [0, 0];
     this.hit = [0, 0];
     this.energy = 0;
-    this.lastFireTime = -1;    // 最近一次「低频」判定成功的渲染时刻
+    // 看门狗用：worklet 是否真的在建消息。不能拿「有没有判定出鼓点」当判据 ——
+    // 前奏/间奏连着十几秒没鼓点很正常，那样会被误判成 worklet 挂了。
+    this.workletStartedAt = -1;
+    this.lastStreamAt = -1;
     this.bpm = 0;
     this.hitTimes = [];
 
@@ -189,7 +192,11 @@ export class BeatEngine {
 
   async start() {
     if (this.mode !== 'none') return this.mode;
-    if (this.context.addModule && this.context.audioWorklet) {
+    // 这里的条件原来写成了 this.context.addModule（AudioContext 上并没有这个方法），
+    // 于是 AudioWorklet 分支从来没进过，检测一直在主线程的 AnalyserNode 上跑：
+    // 帧率一掉就漏拍，桌面 'playback' 缓冲下还会因为没做输出延迟补偿而明显快过声音。
+    // addModule 挂在 AudioWorklet 上，判这里才对。
+    if (this.context.audioWorklet && typeof this.context.audioWorklet.addModule === 'function') {
       try {
         const url = await probeModuleUrl();
         await this.context.audioWorklet.addModule(url);
@@ -209,6 +216,8 @@ export class BeatEngine {
         this.node = node;
         this.silent = silent;
         this.mode = 'worklet';
+        this.workletStartedAt = this.context.currentTime;
+        this.lastStreamAt = -1;
         this.onMode?.('worklet');
         return this.mode;
       } catch { /* 老内核 / 微信 X5 之类不支持，走下面的兜底 */ }
@@ -234,6 +243,7 @@ export class BeatEngine {
   // AudioWorklet 回调：这里只做入队，真正的时间对齐放到 sample() 里
   #ingest(data) {
     if (!data) return;
+    this.lastStreamAt = data.t;
     this.stream.push({ t: data.t, rms: data.rms, rmsHigh: data.rmsHigh });
     if (this.stream.length > 240) this.stream.splice(0, this.stream.length - 240);
     if (data.hit > 0) this.events.push({ t: data.t, band: 0, strength: data.hit });
@@ -267,9 +277,15 @@ export class BeatEngine {
   sample(ctxTime, dt) {
     const latency = this.#latency();
     const audibleAt = ctxTime - latency;
-    // 看门狗：AudioWorklet 在个别内核上可能建得起来但永远不调度，
-    // 那样画面会彻底不跳。长时间判不出低频拍就自动退回 AnalyserNode。
-    if (this.mode === 'worklet' && ctxTime - this.lastFireTime > 8 && this.peak[0] > 0.05) this.#demote();
+    // 看门狗：AudioWorklet 在个别内核上可能建得起来但永远不调度，那样画面会彻底不跳。
+    // 判据是「音频线程还有没有在报数」：2 秒没有任何消息才退回 AnalyserNode；
+    // 刚建好还没收到第一帧时给 3 秒启动宽限。
+    if (this.mode === 'worklet') {
+      const stale = this.lastStreamAt >= 0
+        ? ctxTime - this.lastStreamAt > 2
+        : this.workletStartedAt >= 0 && ctxTime - this.workletStartedAt > 3;
+      if (stale) this.#demote();
+    }
 
     if (this.mode === 'worklet') {
       // 丢掉已经听过的样本，取「此刻正在响」的那一段
@@ -362,7 +378,6 @@ export class BeatEngine {
   #fire(band, strength, t) {
     if (band === 0) {
       if (strength > this.pendingHit) this.pendingHit = strength;
-      this.lastFireTime = t;
       this.hitTimes.push(t);
       while (this.hitTimes.length > 12) this.hitTimes.shift();
       this.#estimateBpm();

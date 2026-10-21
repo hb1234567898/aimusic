@@ -181,17 +181,10 @@ void main() {
     highMidLift = uHighMid * highMidRegion * fract(rnd * 7.7) * 2.5;
   }
 
-  // 高频集中驱动中心柱：不同格子使用相位和随机门形成清楚的高低起伏。
-  float highCoreRegion = smoothstep(24.0, 2.0, centerDist);
-  float highCoreBand = uHighMid * 0.65 + uPresence * 0.9 + uBrilliance * 1.15 + uAir * 0.85;
-  float highCoreWave = 0.38 + 0.62 * max(0.0, sin(pos2D.x * 0.34 - pos2D.y * 0.27 + uTime * 3.2 + rnd * 3.0));
-  float highCoreAccent = mix(1.0, 1.75, step(0.86, fract(rnd * 19.7)));
-  float highCoreLift = highCoreBand * highCoreRegion * highCoreWave * highCoreAccent * 3.2;
-
-  // 原生模式把低频交给涟漪，把中心柱的高度交给高频；其余实验模式保留各自频段地貌。
-  float audioElevation = uVariant == 0
-    ? lowMidLift * 0.55 + midLift * 0.65 + highMidLift * 0.35 + highCoreLift
-    : subLift + bassLift + lowMidLift + midLift + highMidLift;
+  // 与原作一致：低频两段（SUB BASS / BASS）把中心山体顶起来。BeatEngine 的鼓点包络
+  // 直接混进这两段，所以底鼓落地的那一帧，中心整片波峰一起抬升，拍点才看得出来。
+  // 之前把低频改去只做涟漪、中心高度交给高频，结果波峰跟着镲片和旋律乱跳，不跟拍。
+  float audioElevation = subLift + bassLift + lowMidLift + midLift + highMidLift;
   if (rnd > 0.99) audioElevation += uEnergy * 5.0;
 
   // 实验室变体只重新组织原生频段地形，网格、相机、材质和实例数保持不变。
@@ -343,13 +336,9 @@ void main() {
   vec3 brightCool = mix(coolCore, vec3(1.0), 0.24);
   targetGlow = mix(targetGlow, brightCool, uBrightness * 0.6);
   vec3 currentGlow = mix(cBase2, targetGlow, normElevation) * uGlowIntensity * distFade;
-  // 高频只在中心核心提亮；外围继续限制白光，避免整个频谱同时过曝。
+  // 中心核心跟着低频（也就是鼓点）提亮；外围继续限制白光，避免整个频谱同时过曝。
   float centerFocus = 1.0 - smoothstep(12.0, 32.0, centerDist);
-  float centerPulse = centerFocus * clamp(
-    uHighMid * 0.45 + uPresence * 0.62 + uBrilliance * 0.78 + uAir * 0.62,
-    0.0,
-    1.0
-  );
+  float centerPulse = centerFocus * clamp(uSubBass * 0.72 + uBass * 0.48, 0.0, 1.0);
   currentGlow += vec3(1.0) * centerPulse * 0.16;
   currentGlow = min(currentGlow, vec3(mix(0.82, 0.96, centerPulse)));
   currentGlow = mix(currentGlow, uRippleColor, vRippleAnim.x);
@@ -723,12 +712,15 @@ export function createTerrainGL(canvas, options = {}) {
     for (let i = 0; i < 8; i += 1) if (smooth[i] > 0.05) active += 1;
     const density = active / 8;
 
-    // --- 只有低频鼓点放水波；高频 onset 不再触发涟漪 ---
-    if (options.onsetRipples !== false && input.playing && kickNorm > 0.46 && input.time - lastRippleTime > 0.9) {
+    // --- 底鼓每一下都推出一圈水波 ---
+    // 原来留了 0.9s 间隔，120~130BPM 的歌一半的拍子被吞掉，看着就是「有些拍没反应」。
+    // 现在按原作 15 帧（0.25s）的冷却走：四四拍每一下都有波，双踩也不会叠成一圈。
+    const rippleGap = Number(options.rippleCooldown) || 0.26;
+    if (options.onsetRipples !== false && input.playing && kickNorm > 0.22 && input.time - lastRippleTime > rippleGap) {
       lastRippleTime = input.time;
       const angle = Math.random() * Math.PI * 2;
       const radius = Math.random() * 20;
-      addRipple(Math.cos(angle) * radius, Math.sin(angle) * radius, Math.min(kickNorm * 1.7, 1.8), 0);
+      addRipple(Math.cos(angle) * radius, Math.sin(angle) * radius, Math.min(0.35 + kickNorm * 1, 1.4), 0);
     }
     const rippleInterval = Number(options.rippleInterval) || 0;
     if (input.playing && rippleInterval > 0 && input.time - lastAmbientRippleTime >= rippleInterval) {
