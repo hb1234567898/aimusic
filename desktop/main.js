@@ -4,7 +4,7 @@ import { app, BrowserWindow, ipcMain, powerSaveBlocker, session, shell } from 'e
 import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { checkForVerifiedUpdate, downloadVerifiedUpdate } from './update-download.mjs';
+import { checkForVerifiedUpdate, createVersionedTaskQueue, downloadVerifiedUpdate } from './update-download.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const appRoot = path.resolve(__dirname, '..');
@@ -20,8 +20,9 @@ let neteaseCookieSyncTimer = null;
 let displaySleepBlockerId = null;
 let pendingUpdateInfo = null;
 let updateCheckPromise = null;
-let updateDownloadPromise = null;
+const updateDownloadQueue = createVersionedTaskQueue();
 let downloadedInstallerPath = '';
+let downloadedInstallerVersion = '';
 
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 // 保留 Chromium 默认硬件加速，让 Windows 自己选择集显/独显；兼容性不佳时交给
@@ -412,24 +413,46 @@ function prefersChinaUpdateMirrors() {
 
 function startVerifiedUpdateDownload(info = pendingUpdateInfo) {
   if (!info?.version) return Promise.reject(new Error('还没有可下载的更新'));
-  if (downloadedInstallerPath) return Promise.resolve({ path: downloadedInstallerPath, source: 'cache' });
-  if (updateDownloadPromise) return updateDownloadPromise;
+  const version = info.version;
+  if (downloadedInstallerPath && downloadedInstallerVersion === version) {
+    return Promise.resolve({ path: downloadedInstallerPath, source: 'cache' });
+  }
+  if (downloadedInstallerVersion && downloadedInstallerVersion !== version) {
+    downloadedInstallerPath = '';
+    downloadedInstallerVersion = '';
+  }
   pendingUpdateInfo = info;
-  emitUpdateState({ phase: 'downloading', percent: 0, version: info.version });
-  updateDownloadPromise = downloadVerifiedUpdate({
-    updateInfo: info,
-    destinationDir: path.join(app.getPath('temp'), 'orbit-music-updates', info.version),
-    preferMirrors: prefersChinaUpdateMirrors(),
-    onProgress: percent => emitUpdateState({ phase: 'downloading', percent, version: info.version }),
-  }).then(result => {
-    downloadedInstallerPath = result.path;
-    emitUpdateState({ phase: 'downloaded', version: info.version, source: result.source });
-    return result;
-  }).catch(error => {
-    emitUpdateState({ phase: 'error', message: error?.message || '更新下载失败', version: info.version });
-    throw error;
-  }).finally(() => { updateDownloadPromise = null; });
-  return updateDownloadPromise;
+  return updateDownloadQueue.run(
+    version,
+    queuedVersion => pendingUpdateInfo?.version === queuedVersion,
+    () => {
+      emitUpdateState({ phase: 'downloading', percent: 0, version });
+      return downloadVerifiedUpdate({
+        updateInfo: info,
+        destinationDir: path.join(app.getPath('temp'), 'orbit-music-updates', version),
+        preferMirrors: prefersChinaUpdateMirrors(),
+        onProgress: percent => {
+          if (pendingUpdateInfo?.version === version) emitUpdateState({ phase: 'downloading', percent, version });
+        },
+        onRetry: state => {
+          if (pendingUpdateInfo?.version === version) {
+            emitUpdateState({ phase: 'downloading', percent: state.percent, reconnecting: true, version });
+          }
+        },
+      }).then(result => {
+        if (pendingUpdateInfo?.version !== version) return { ...result, superseded: true };
+        downloadedInstallerPath = result.path;
+        downloadedInstallerVersion = version;
+        emitUpdateState({ phase: 'downloaded', version, source: result.source, resumed: result.resumed });
+        return result;
+      }).catch(error => {
+        if (pendingUpdateInfo?.version === version) {
+          emitUpdateState({ phase: 'error', message: error?.message || '更新下载失败', version });
+        }
+        throw error;
+      });
+    },
+  );
 }
 
 async function checkForUpdates() {
@@ -441,11 +464,17 @@ async function checkForUpdates() {
     preferMirrors: prefersChinaUpdateMirrors(),
   }).then(result => {
     if (!result.available) {
+      // 发布撤回或最新版本已不高于本机时，让仍在运行的旧下载失去 current 身份；
+      // 它可以安全结束并保留缓存，但不能再把 UI 改回“可安装”。
+      pendingUpdateInfo = null;
+      downloadedInstallerPath = '';
+      downloadedInstallerVersion = '';
       emitUpdateState({ phase: 'idle', version: result.info.version, source: result.source });
       return { ok: true, available: false, version: result.info.version, source: result.source };
     }
     pendingUpdateInfo = result.info;
     downloadedInstallerPath = '';
+    downloadedInstallerVersion = '';
     emitUpdateState({ phase: 'available', version: result.info.version, source: result.source });
     // 检查成功后直接进入下载；中国区域的清单和安装包都优先使用镜像。
     startVerifiedUpdateDownload(result.info).catch(() => {});
@@ -470,7 +499,9 @@ ipcMain.handle('orbit-download-update', async () => {
 });
 ipcMain.handle('orbit-install-update', async () => {
   if (!updaterEnabled) return { ok: false, reason: 'dev' };
-  if (!downloadedInstallerPath) return { ok: false, reason: 'not-downloaded' };
+  if (!downloadedInstallerPath || downloadedInstallerVersion !== pendingUpdateInfo?.version) {
+    return { ok: false, reason: 'not-downloaded' };
+  }
   const error = await shell.openPath(downloadedInstallerPath);
   if (error) return { ok: false, reason: error };
   setTimeout(() => app.quit(), 900);
