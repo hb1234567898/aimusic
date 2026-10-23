@@ -13,6 +13,8 @@
 //   · terrainResponse：Kick 包络混入低频两段
 // 颜色主题：按用户站点整体灰阶，默认用 minimal-monochrome；改成 'nocturnal' 就是对方默认外观。
 
+import { createTerrainResponse, stepTerrainResponse } from './terrainResponse.js';
+
 const TERRAIN_SIZE = 168;
 
 // 5 套主题，取自他们的 production bundle
@@ -64,14 +66,6 @@ export const TERRAIN_THEMES = {
 
 // 默认 EQ 推子，和对方一致：低频两段给到 90/92，地形主要靠低频撑起来
 const DEFAULT_EQ = [90, 92, 50, 50, 50, 50, 50, 48];
-// 对方把 kick 直接灌进低频两段，纯频谱能量上升太慢，鼓落地那一刻顶不起来
-const MAX_KICK_DEFORM = 0.75;
-const KICK_SUB_BASS_GAIN = 1.28;
-const KICK_BASS_GAIN = 1.15;
-const BASE_SUB_BASS_GAIN = 0.22;
-const BASE_BASS_GAIN = 0.2;
-const MAX_SHADER_SUB_BASS = 1.2;
-const MAX_SHADER_BASS = 1.15;
 const MAX_RIPPLES = 10;
 
 const VERT = `#version 300 es
@@ -181,9 +175,8 @@ void main() {
     highMidLift = uHighMid * highMidRegion * fract(rnd * 7.7) * 2.5;
   }
 
-  // 与原作一致：低频两段（SUB BASS / BASS）把中心山体顶起来。BeatEngine 的鼓点包络
-  // 直接混进这两段，所以底鼓落地的那一帧，中心整片波峰一起抬升，拍点才看得出来。
-  // 之前把低频改去只做涟漪、中心高度交给高频，结果波峰跟着镲片和旋律乱跳，不跟拍。
+  // 与原作一致：SUB BASS / BASS 驱动中心山体，中高频保留各自地貌。
+  // 低频先经过地形专用的起振/释放包络，强弱拍逐级抬升，而非触发就全体到顶。
   float audioElevation = subLift + bassLift + lowMidLift + midLift + highMidLift;
   if (rnd > 0.99) audioElevation += uEnergy * 5.0;
 
@@ -466,14 +459,6 @@ function applyEq(value, eq) {
   return clamp01(Math.max(0, value - d * 0.35) * (1 - d * 0.35));
 }
 
-function applyLowBand(value, eq, max) {
-  const delta = (eq - 50) / 50;
-  const v = delta >= 0
-    ? value * (1 + delta * 1.8)
-    : Math.max(0, value - Math.abs(delta) * 0.35) * (1 - Math.abs(delta) * 0.35);
-  return v < 0 ? 0 : v > max ? max : v;
-}
-
 function compile(gl, type, source) {
   const shader = gl.createShader(type);
   gl.shaderSource(shader, source);
@@ -580,7 +565,7 @@ export function createTerrainGL(canvas, options = {}) {
   const smoothTarget = new Float32Array(8);
   const rawBands = new Float32Array(8);   // 每帧复用，别在 frame 里新建
   let prevBins = new Float32Array(1024);
-  let kick = 0;
+  const lowResponse = createTerrainResponse();
   let prevBrightness = 0;
   let aspect = 0;   // 0 而不是 1：保证首帧 resize 一定会算出投影矩阵（正方形视口 aspect 正好是 1 时也不会漏）
   let viewportWidth = 0;
@@ -637,9 +622,10 @@ export function createTerrainGL(canvas, options = {}) {
     }
   }
 
-  // frame 数据：{ time, bins, sampleRate, energy, kickEnvelope, onset, onsetHigh, playing, interacting }
+  // frame 数据：{ time, dt, bins, sampleRate, energy, onset, onsetHigh, playing, interacting }
   function frame(input) {
     pendingTime = input.time;
+    const delta = Math.max(0, Number.isFinite(input.dt) ? input.dt : 1 / 60);
     const interactionGridSize = input.interacting && !mobile
       ? Math.max(96, Math.round(gridSize * 0.72))
       : gridSize;
@@ -662,16 +648,14 @@ export function createTerrainGL(canvas, options = {}) {
       }
     }
 
-    // BeatEngine 已提供快起慢落的低频包络。高频 onset 不再灌进低频地形，
-    // 否则军鼓和镲也会把中心整片顶起，与原作的频段分工不一致。
-    kick = input.playing ? Math.min(MAX_KICK_DEFORM, Math.max(0, input.kickEnvelope || 0)) : 0;
-    const kickNorm = kick / MAX_KICK_DEFORM;
-
-    // --- 低频两段混入 kick（terrainResponse.deriveKickFollowLowBands）---
-    const sub = Math.min(MAX_SHADER_SUB_BASS,
-      applyLowBand(raw[0] * BASE_SUB_BASS_GAIN + kickNorm * KICK_SUB_BASS_GAIN, DEFAULT_EQ[0], MAX_SHADER_SUB_BASS));
-    const bass = Math.min(MAX_SHADER_BASS,
-      applyLowBand(raw[1] * BASE_BASS_GAIN + kickNorm * KICK_BASS_GAIN, DEFAULT_EQ[1], MAX_SHADER_BASS));
+    // 持续频谱负责低音起伏，新 onset 通过独立的起振/释放包络补冲击。
+    // 不再把 BeatEngine.hit 当柱高直接乘 EQ：那会让每一下都撞到相同的上限。
+    const low = stepTerrainResponse(lowResponse, {
+      subBass: raw[0], bass: raw[1], onset: input.onset,
+      playing: input.playing, dt: delta, eq: DEFAULT_EQ,
+    });
+    const sub = low.subBass;
+    const bass = low.bass;
     const lowMid = applyEq(raw[2], DEFAULT_EQ[2]);
     const mid = applyEq(raw[3], DEFAULT_EQ[3]);
     const highMid = applyEq(raw[4], DEFAULT_EQ[4]);
@@ -679,14 +663,16 @@ export function createTerrainGL(canvas, options = {}) {
     const brilliance = applyEq(raw[6], DEFAULT_EQ[6]);
     const air = applyEq(raw[7], DEFAULT_EQ[7]);
 
-    // 快起慢落，帧率无关（对方用 responseRate = lerp(2.2,60,motionSpeed/100)）
-    const rate = 12;
-    const blend = 1 - Math.exp(-rate * (input.dt || 0.0167));
+    // 低频已有独立包络，跟随速度采用原作默认 motionSpeed=50 的 31.1/s，
+    // 不再额外乘 2.2 把起振拉成阶跃；其余频段保留原有快起慢落。
+    const blend = 1 - Math.exp(-12 * delta);
+    const lowBlend = 1 - Math.exp(-31.1 * delta);
     const target = smoothTarget;
     target[0] = sub; target[1] = bass; target[2] = lowMid; target[3] = mid;
     target[4] = highMid; target[5] = presence; target[6] = brilliance; target[7] = air;
     for (let i = 0; i < 8; i += 1) {
-      smooth[i] += (target[i] - smooth[i]) * (target[i] > smooth[i] ? Math.min(1, blend * 2.2) : blend);
+      const follow = i < 2 ? lowBlend : (target[i] > smooth[i] ? Math.min(1, blend * 2.2) : blend);
+      smooth[i] += (target[i] - smooth[i]) * follow;
     }
 
     // --- 派生音色量 ---
@@ -712,15 +698,13 @@ export function createTerrainGL(canvas, options = {}) {
     for (let i = 0; i < 8; i += 1) if (smooth[i] > 0.05) active += 1;
     const density = active / 8;
 
-    // --- 底鼓每一下都推出一圈水波 ---
-    // 原来留了 0.9s 间隔，120~130BPM 的歌一半的拍子被吞掉，看着就是「有些拍没反应」。
-    // 现在按原作 15 帧（0.25s）的冷却走：四四拍每一下都有波，双踩也不会叠成一圈。
+    // 水波只在新拍点出现时触发，不能拿上一拍还没落完的包络尾巴补发。
     const rippleGap = Number(options.rippleCooldown) || 0.26;
-    if (options.onsetRipples !== false && input.playing && kickNorm > 0.22 && input.time - lastRippleTime > rippleGap) {
+    if (options.onsetRipples !== false && input.playing && low.impulseStrength > 0 && input.time - lastRippleTime > rippleGap) {
       lastRippleTime = input.time;
       const angle = Math.random() * Math.PI * 2;
       const radius = Math.random() * 20;
-      addRipple(Math.cos(angle) * radius, Math.sin(angle) * radius, Math.min(0.35 + kickNorm * 1, 1.4), 0);
+      addRipple(Math.cos(angle) * radius, Math.sin(angle) * radius, 0.22 + low.impulseStrength * 0.65, 0);
     }
     const rippleInterval = Number(options.rippleInterval) || 0;
     if (input.playing && rippleInterval > 0 && input.time - lastAmbientRippleTime >= rippleInterval) {

@@ -1,7 +1,7 @@
 {
   "name": "orbit-music",
   "private": true,
-  "version": "1.0.17",
+  "version": "1.0.18",
   "description": "ORBIT liquid-glass music universe with QQ Music and Netease Cloud Music bridges",
   "author": "ORBIT Music",
   "type": "module",
@@ -10,7 +10,7 @@
     "dev": "vite --host 127.0.0.1 --port 8765",
     "dev:electron": "node scripts/dev-electron.mjs",
     "start": "electron .",
-    "test": "node --test server/*.test.mjs",
+    "test": "node --test server/*.test.mjs src/*.test.js",
     "build": "vite build",
     "preview": "vite preview --host 127.0.0.1 --port 8765",
     "build:electron:dir": "npm run build && electron-builder --dir",
