@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { tracks } from './tracks.js';
-import { ensureLrc, prefetchLrc, stripTitleEcho, waitForLrc } from './lyrics.js';
+import { ensureLrc, findLrcIndex, invalidateLrc, prefetchLrc, waitForLrc } from './lyrics.js';
+import LrcLine from './LrcLine.jsx';
 import QQBridge from './QQBridge.jsx';
 import NeteaseBridge from './NeteaseBridge.jsx';
 import {
@@ -420,46 +421,37 @@ function useMobile() {
   return mobile;
 }
 
-function LyricsPanel({ track, trackNumber, currentTime, duration, playing, audioRef, analysisRef }) {
-  const [rows, setRows] = useState([{ time: 0, text: '正在载入本地同步歌词…' }]);
+function LyricsPanel({ track, trackNumber, currentTime, duration, playing, audioRef, analysisRef, lyricsVersion }) {
+  const [rows, setRows] = useState([]);
   const [state, setState] = useState('loading');
   const mobile = useMobile();
 
   useEffect(() => {
     let alive = true;
-    setRows([{ time: 0, text: '正在载入本地同步歌词…' }]);
+    setRows([]);
     setState('loading');
     // 复用 App 里的加载结果：播放前已经等过一次，这里通常是命中缓存
     ensureLrc(track.lyrics).then(parsed => {
-      if (!alive || !parsed) return;
-      if (parsed.rows.length) {
+      if (!alive) return;
+      if (parsed?.rows.some(row => row.lines.length)) {
         setRows(parsed.rows);
-        setState('local');
+        setState('ready');
       } else {
-        setRows([{ time: 0, text: '当前歌词文件没有可读取的时间轴' }]);
         setState('missing');
       }
     }).catch(() => {
       if (!alive) return;
-      setRows([{ time: 0, text: '本地歌词暂时无法读取' }]);
       setState('error');
     });
     return () => { alive = false; };
-  }, [track]);
+  }, [track, lyricsVersion]);
 
-  // 歌词开头那行「歌名」跟面板标题重复，去掉（细节见 lyrics.js 的 stripTitleEcho）
-  const visibleRows = useMemo(
-    () => stripTitleEcho(rows, track.title, track.artist),
-    [rows, track.title, track.artist],
-  );
-
+  const visibleRows = rows;
   const fallbackIndex = useMemo(() => {
-    let index = 0;
-    visibleRows.forEach((row, rowIndex) => {
-      if (currentTime >= row.time) index = rowIndex;
-    });
-    return index;
-  }, [currentTime, visibleRows]);
+    const engine = analysisRef?.current?.engine;
+    const latency = engine && engine.mode !== 'none' ? engine.autoLatency : 0;
+    return findLrcIndex(visibleRows, Math.max(0, currentTime - (latency || 0)));
+  }, [currentTime, visibleRows, analysisRef]);
 
   // timeupdate 只有约 4Hz，切换会慢半拍；播放时改为逐帧采样，定位更跟手
   const [liveIndex, setLiveIndex] = useState(null);
@@ -472,21 +464,17 @@ function LyricsPanel({ track, trackNumber, currentTime, duration, playing, audio
     let frame = 0;
     const tick = () => {
       // 音频被 Web Audio 接管后，audio.currentTime 是解码位置，比耳朵听到的要靠前
-      // 整整一个输出延迟。歌词不减掉这段就会比人声早出来，所以和律动用同一个补偿量。
+      // 一段输出延迟。只补偿设备延迟，律动画面手动偏移不改变歌词时间轴。
       const engine = analysisRef?.current?.engine;
-      const latency = engine && engine.mode !== 'none' ? engine.latency : 0;
-      const time = Math.max(0, (audio.currentTime || 0) - latency);
-      let index = 0;
-      for (let rowIndex = 0; rowIndex < visibleRows.length; rowIndex += 1) {
-        if (time >= visibleRows[rowIndex].time) index = rowIndex;
-        else break;
-      }
+      const latency = engine && engine.mode !== 'none' ? engine.autoLatency : 0;
+      const time = Math.max(0, (audio.currentTime || 0) - (latency || 0));
+      const index = findLrcIndex(visibleRows, time);
       setLiveIndex(previous => (previous === index ? previous : index));
       frame = requestAnimationFrame(tick);
     };
     frame = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(frame);
-  }, [audioRef, playing, visibleRows]);
+  }, [audioRef, analysisRef, playing, visibleRows]);
 
   const activeIndex = liveIndex !== null && liveIndex < visibleRows.length ? liveIndex : fallbackIndex;
 
@@ -498,7 +486,7 @@ function LyricsPanel({ track, trackNumber, currentTime, duration, playing, audio
   const [shift, setShift] = useState(0);
   useLayoutEffect(() => {
     const measure = () => {
-    const target = rowRefs.current[activeIndex] || rowRefs.current[0] || headRef.current;
+    const target = rowRefs.current[activeIndex] || headRef.current;
     const track = trackRef.current;
     const viewport = track?.parentElement;
     if (!target || !track || !viewport) return;
@@ -508,7 +496,7 @@ function LyricsPanel({ track, trackNumber, currentTime, duration, playing, audio
     const raw = center - (target.offsetTop + target.offsetHeight / 2);
     // 开头第一行时强制轨道贴顶：视窗太小时「把第一行居中」会把歌名裁掉半截，
     // 干脆整块从顶上开始，歌名完整可见，歌词跟在下面。
-    const aligned = activeIndex === 0 ? 0 : raw;
+    const aligned = activeIndex <= 0 ? 0 : raw;
     const min = Math.min(0, viewport.clientHeight - track.offsetHeight);
     setShift(Math.max(min, Math.min(0, aligned)));
   };
@@ -523,8 +511,11 @@ function LyricsPanel({ track, trackNumber, currentTime, duration, playing, audio
     };
   }, [activeIndex, visibleRows, mobile]);
 
-  const providerName = track.provider === 'qq' ? 'QQ 音乐同步歌词' : '本地同步歌词';
-  const source = state === 'local' ? providerName : state === 'loading' ? '正在载入同步歌词' : state === 'missing' ? '歌词没有可用时间轴' : '同步歌词暂时无法读取';
+  const providerName = track.provider === 'qq' ? 'QQ 音乐'
+    : track.provider === 'netease' ? '网易云音乐' : '本地 LRC';
+  const wordSynced = rows.some(row => row.wordLines.some(Boolean));
+  const source = state === 'ready' ? `${providerName} · ${wordSynced ? '逐字歌词' : '逐行歌词'}`
+    : state === 'loading' ? '正在载入同步歌词' : state === 'missing' ? '暂无同步歌词' : '同步歌词读取失败';
 
   return (
     <div className={`intro ${playing ? 'is-playing' : ''}`} id="lyrics-panel" aria-live="polite">
@@ -541,7 +532,12 @@ function LyricsPanel({ track, trackNumber, currentTime, duration, playing, audio
               key={`${row.time}-${index}`}
               ref={element => { rowRefs.current[index] = element; }}
             >
-              {row.text}
+              {row.lines.map((text, lineIndex) => (
+                <LrcLine key={lineIndex} text={text} words={row.wordLines[lineIndex]}
+                  active={index === activeIndex} playing={playing} currentTime={currentTime}
+                  audioRef={audioRef} analysisRef={analysisRef} />
+              ))}
+              {row.translations.map((text, lineIndex) => <span className="lyric-translation" key={lineIndex}>{text}</span>)}
             </div>
           ))}
         </div>
@@ -579,7 +575,7 @@ function makeCardCoordinates() {
   return result;
 }
 
-function Universe({ current, playing, currentTime, duration, onSelect, zoom, backdropMode, onBackdrop, onRotateToast, onZoom, analysisRef, audioRef, libraryVersion, onOpenBridge }) {
+function Universe({ current, playing, currentTime, duration, onSelect, zoom, backdropMode, onBackdrop, onRotateToast, onZoom, analysisRef, audioRef, libraryVersion, lyricsVersion, onOpenBridge }) {
   const universeRef = useRef(null);
   const canvasRef = useRef(null);
   const glCanvasRef = useRef(null);
@@ -1673,7 +1669,7 @@ function Universe({ current, playing, currentTime, duration, onSelect, zoom, bac
       <canvas ref={canvasRef} id="soundfield" aria-hidden="true" />
       <div className="ambient" /><div className="orbit-line one" /><div className="orbit-line two" />
       {tracks[current] ? (
-        <LyricsPanel track={tracks[current]} trackNumber={current + 1} currentTime={currentTime} duration={duration} playing={playing} audioRef={audioRef} analysisRef={analysisRef} />
+        <LyricsPanel track={tracks[current]} trackNumber={current + 1} currentTime={currentTime} duration={duration} playing={playing} audioRef={audioRef} analysisRef={analysisRef} lyricsVersion={lyricsVersion} />
       ) : (
         <div className="empty-universe">
           <span className="eyebrow">ORBIT DESKTOP / EMPTY LIBRARY</span>
@@ -1970,6 +1966,7 @@ export default function App() {
   const [backdropMode, setBackdropMode] = useState(() => canUseTerrainGL() ? 4 : 0);
   const [zoom, setZoom] = useState(1);
   const [preparing, setPreparing] = useState(false);
+  const [lyricsVersion, setLyricsVersion] = useState(0);
   const [outputPref, setOutputPref] = useState(readOutputPref);
   const [beatOffset, setBeatOffset] = useState(readBeatOffset);
   const [outputs, setOutputs] = useState([]);
@@ -2295,6 +2292,12 @@ export default function App() {
         }
         audioRef.current.load();
       }
+      if (currentTrack.provider === 'qq' || currentTrack.provider === 'netease') {
+        // Login/permission refresh can expose word lyrics that the pre-login
+        // prefetch did not have. Reload both the cache and the visible panel.
+        invalidateLrc(currentTrack.lyrics);
+        setLyricsVersion(value => value + 1);
+      }
       // 探测服务端是不是只拿到了试听片段（响应头里带标记）。
       // 只探测 1 个字节，不会真把整首歌拉一遍。
       if (currentTrack.provider === 'qq') {
@@ -2579,6 +2582,7 @@ export default function App() {
           analysisRef={analysisRef}
           audioRef={audioRef}
           libraryVersion={libraryVersion}
+          lyricsVersion={lyricsVersion}
           onOpenBridge={() => setQQBridgeOpen(true)}
         />
       )}

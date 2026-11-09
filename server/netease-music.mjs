@@ -192,10 +192,21 @@ export function registerNeteaseMusicExpressRoutes(app) {
     const id = String(request.query.id || '').trim();
     if (!id) return errorResponse(response, 400, '缺少歌曲 ID');
     try {
-      const payload = await json(`https://music.163.com/api/song/lyric?id=${encodeURIComponent(id)}&lv=-1&kv=-1&tv=-1`, { headers: headers() });
+      let payload;
+      try {
+        payload = await json(`https://music.163.com/api/song/lyric/v1?id=${encodeURIComponent(id)}&cp=false&lv=0&tv=0&rv=0&kv=0&yv=0&ytv=0&yrv=0`, {
+          headers: headers(), signal: AbortSignal.timeout(12000),
+        });
+        if (!payload?.lrc && !payload?.yrc) throw new Error('新版歌词暂不可用');
+      } catch {
+        payload = await json(`https://music.163.com/api/song/lyric?id=${encodeURIComponent(id)}&lv=-1&kv=-1&tv=-1`, {
+          headers: headers(), signal: AbortSignal.timeout(8000),
+        });
+      }
       const original = payload?.lrc?.lyric || '';
       const translated = payload?.tlyric?.lyric || '';
-      response.type('text/plain').send(translated ? `${original}\n${translated}` : original);
+      response.json({ provider: 'netease', id, lyric: original, tlyric: translated,
+        yrc: payload?.yrc?.lyric || '', ytlyric: payload?.ytlrc?.lyric || '', });
     } catch (error) { errorResponse(response, 502, error.message || '读取网易云歌词失败'); }
   });
 

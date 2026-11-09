@@ -1,6 +1,8 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import { registerQQMusicViteMiddlewares } from './server/qq-music.mjs';
+import express from 'express';
+import { registerNeteaseMusicExpressRoutes } from './server/netease-music.mjs';
 
 const buildVersion = Date.now().toString(36);
 
@@ -15,6 +17,13 @@ function qqMusicBridge() {
     name: 'orbit-qq-music-bridge',
     configureServer(server) {
       registerQQMusicViteMiddlewares(server, writeJson);
+      const netease = express();
+      netease.use(express.json({ limit: '256kb' }));
+      registerNeteaseMusicExpressRoutes(netease);
+      server.middlewares.use((request, response, next) => {
+        if (request.url?.startsWith('/api/netease/')) return netease(request, response, next);
+        next();
+      });
     },
   };
 }

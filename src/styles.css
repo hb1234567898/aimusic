@@ -68,6 +68,9 @@ main img{-webkit-user-drag:none;user-select:none;-webkit-user-select:none}
 .lyric-row.active{font-size:clamp(26px,2.6vw,38px);font-weight:500;color:#f3f3f5;opacity:1;transform:scale(calc(1 + var(--beat,0)*.024));text-shadow:0 0 calc(16px + var(--beat,0)*21px) #ffffff44,0 2px 16px #101113}
 .lyric-row.active::before{content:"";position:absolute;left:-14px;top:50%;width:3px;height:calc(34% + var(--beat,0)*42%);transform:translateY(-50%);border-radius:3px;background:linear-gradient(#ffffff,#ffffff55);opacity:calc(.28 + var(--beat,0)*.48);box-shadow:0 0 calc(4px + var(--beat,0)*9px) #ffffffcc}
 .lyric-row.near{opacity:.5;transform:scale(.98)}
+.lyric-original{display:block;white-space:pre-wrap}
+.lyric-row.active .lyric-word{background:linear-gradient(to right,#f3f3f5 var(--word-fill,0%),#777782 var(--word-fill,0%));background-clip:text;-webkit-background-clip:text;color:transparent;text-shadow:none;box-decoration-break:clone;-webkit-box-decoration-break:clone}
+.lyric-translation{display:block;margin-top:6px;font-size:.58em;line-height:1.5;font-weight:400;color:#b9b9c3;white-space:pre-wrap}
 /* 作词 / 作曲 / Cover 这类信息行按时间轴正常滚，但样式压得更轻 */
 .lyric-row.meta{font-size:11.5px;letter-spacing:1.1px;color:#9c9ca6}
 .lyric-row.meta.near{opacity:.36}

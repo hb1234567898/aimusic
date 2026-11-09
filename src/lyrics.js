@@ -1,136 +1,202 @@
-// LRC 解析 + 带缓存的加载器。
-// 播放前会先等歌词落地，所以这里必须保证同一个地址只发一次请求，
-// 并且失败后允许重试（失败的请求不留在缓存里）。
+// Keep provider text and timing together; never estimate timing from text length.
+const TIME_TAGS = /^(?:\[\d{1,3}:[0-5]\d(?:[.:]\d{1,3})?\])+/;
+const TIME_TAG = /\[(\d{1,3}):([0-5]\d)(?:[.:](\d{1,3}))?\]/g;
+const ID_TAG = /^\[(ti|ar|al|by|au|offset|length|re|ve)\s*:\s*(.*?)\]\s*$/i;
+const META_HEAD = /^(?:作词|作詞|作曲|编曲|編曲|制作人|製作人|制作|製作|监制|監製|混音|母带|母帶|录音|錄音|原唱|翻唱|和声|和聲|演唱|出品|词曲|词|詞|曲)\s*[:：]/;
+const WORD_TAG = /<(\d{1,3}):([0-5]\d)(?:[.:](\d{1,3}))?>/g;
+const timestampMs = tag => Number(tag[1]) * 60000 + Number(tag[2]) * 1000
+  + Number((tag[3] || '').padEnd(3, '0'));
 
-const TIME_TAG = /^\s*\[(\d{1,3}):(\d{2})(?:[.:](\d{1,3}))?\]\s*(.*)$/;
-const ID_TAG = /^\s*\[(ti|ar|al|by|au|offset)\s*:\s*(.*?)\]\s*$/i;
-// [Verse 1]、[Chorus] 这类分段标记不算歌词
-const SECTION_MARK = /^\s*[\[［(（].*[\]］)）]\s*$/;
-// 作词 / 作曲 / 编曲 / Cover / Remix …这些行照样排在歌词里按时间滚，
-// 只是打个标记，渲染时给个更轻的样式（Windows /Players 之外的信息）
-const META_HEAD = /(^|[\s　(（\[])(作词|作詞|作曲|编曲|編曲|制作人|製作人|制作|製作|监制|監製|混音|母带|母帶|录音|錄音|原唱|翻唱|原曲|二创|二創|封面|中文翻译|中文翻譯|和声|和聲|吉他|贝斯|貝斯|演唱|策划|出品|企划|统筹|歌词|词曲|词|詞|曲)\s*[:：\-－]/;
-const META_ANY = /(cover|remix|ost|feat\.?|version|instrumental|原名|原曲|主题曲|总决赛|伴奏|纯音乐|翻译)/i;
-
-const isMetaLine = text => META_HEAD.test(text) || (text.length <= 60 && META_ANY.test(text));
-
-// 一行里挤了好几个创作信息时拆开各占一行，例如
-// 「原唱-NewJeans 翻唱-noli 混音-姜艾芙」→ 三条独立的小行，
-// 否则在手机上必然被截断成一串看不清的省略内容。
-const META_LABEL = /(?:^|[\s　])((?:(?:作词|作詞|作曲|编曲|編曲|制作人|製作人|制作|製作|监制|監製|混音|母带|母帶|录音|錄音|原唱|翻唱|原曲|封面|中文翻译|中文翻譯|和声|和聲|吉他|贝斯|貝斯|演唱|策划|出品|企划|统筹|歌词|词曲|词|詞|曲)\s*[:：\-－]))/g;
-
-function splitMetaRow(text) {
-  const starts = [];
-  META_LABEL.lastIndex = 0;
-  let found = META_LABEL.exec(text);
-  while (found) {
-    starts.push(found.index);
-    // 防止零宽匹配把循环卡死
-    if (found.index === META_LABEL.lastIndex) META_LABEL.lastIndex += 1;
-    found = META_LABEL.exec(text);
+function parseWordCues(source, lineMs) {
+  const tags = [...source.matchAll(WORD_TAG)];
+  if (!tags.length) return { text: source, words: null };
+  const text = source.replace(WORD_TAG, '');
+  const times = tags.map(timestampMs);
+  // Bad word times must not be repaired by estimating a different timeline.
+  if (times.some((time, index) => time < lineMs || (index && time < times[index - 1]))) {
+    return { text, words: null };
   }
-  if (starts.length < 2) return null;
-  if (starts[0] > 0) starts[0] = 0; // 前缀信息并入第一段，别丢内容
-  const parts = starts.map((start, index) => text.slice(start, starts[index + 1] ?? text.length).trim()).filter(Boolean);
-  return parts.length >= 2 ? parts : null;
+  const words = [];
+  const prefix = source.slice(0, tags[0].index);
+  if (prefix) words.push({ text: prefix, start: null, end: null });
+  tags.forEach((tag, index) => {
+    const content = source.slice(tag.index + tag[0].length, tags[index + 1]?.index ?? source.length);
+    if (content) words.push({ text: content, start: times[index] / 1000, end: times[index + 1] === undefined ? null : times[index + 1] / 1000 });
+  });
+  return { text, words: words.length ? words : null };
+}
+
+export function lrcWordProgress(word, time) {
+  if (word.start === null || time < word.start) return 0;
+  // With no supplied end time, switch at the supplied onset rather than invent
+  // a duration from the remaining characters or the next line.
+  if (word.end === null || word.end <= word.start) return 1;
+  return Math.min(1, Math.max(0, (time - word.start) / (word.end - word.start)));
 }
 
 export function parseLrc(source) {
-  const rows = [];
+  const entries = [];
   const meta = {};
-
-  (source || '').split(/\r?\n/).forEach(line => {
-    const idTag = line.match(ID_TAG);
-    if (idTag) {
-      meta[idTag[1].toLowerCase()] = idTag[2].trim();
+  if (typeof source !== 'string') return { rows: [], meta };
+  source.replace(/^\uFEFF/, '').split(/\r\n|\n|\r/).forEach(rawLine => {
+    const line = rawLine.trim();
+    const id = line.match(ID_TAG);
+    if (id) {
+      meta[id[1].toLowerCase()] = id[2];
       return;
     }
-    const match = line.match(TIME_TAG);
-    if (!match) return;
-
-    const fraction = match[3] ? Number(`0.${match[3]}`) : 0;
-    const time = Number(match[1]) * 60 + Number(match[2]) + fraction;
-    const text = match[4].trim();
-    // 空行直接丢掉：歌词首行永远要是真内容
-    if (!text) return;
-    if (SECTION_MARK.test(text)) return;
-
-    const parts = isMetaLine(text) ? splitMetaRow(text) : null;
-    if (parts) {
-      // 同一时间点的几行依次排开，写给 MTV 式的逐条浮现留出极小的间隔
-      parts.forEach((part, index) => rows.push({ time: time + index * 0.001, text: part, meta: true }));
-      return;
+    const prefix = line.match(TIME_TAGS)?.[0];
+    if (!prefix) return;
+    const content = line.slice(prefix.length).trim();
+    if (/^\[\d/.test(content)) return;
+    const tags = [...prefix.matchAll(TIME_TAG)];
+    for (const tag of tags) {
+      const ms = timestampMs(tag);
+      const parsed = parseWordCues(content, ms);
+      // Multiple line tags with absolute word cues are ambiguous. Keep the
+      // supplied plain text for repeats rather than shift the word timestamps.
+      entries.push({ ms, text: parsed.text, words: tags.length === 1 ? parsed.words : null });
     }
-    rows.push({ time, text, meta: isMetaLine(text) });
   });
-
+  // Positive LRC offset advances the text. The tag may occur after the lyrics.
+  const offset = /^[+-]?\d+$/.test(meta.offset || '') ? Number(meta.offset) : 0;
+  const groups = new Map();
+  entries.forEach(({ ms, text, words }) => {
+    const timeMs = ms - offset;
+    if (!groups.has(timeMs)) groups.set(timeMs, []);
+    const lines = groups.get(timeMs);
+    if (text && !lines.some(line => line.text === text)) lines.push({ text, words: words?.map(word => ({
+      ...word,
+      start: word.start === null ? null : word.start - offset / 1000,
+      end: word.end === null ? null : word.end - offset / 1000,
+    })) || null });
+  });
+  const rows = [...groups].sort(([a], [b]) => a - b).map(([ms, lines]) => ({
+    time: ms / 1000,
+    text: lines[0]?.text || '',
+    lines: lines.map(line => line.text),
+    wordLines: lines.map(line => line.words),
+    translations: [],
+    meta: lines.length > 0 && lines.every(line => META_HEAD.test(line.text)),
+  }));
   return { rows, meta };
 }
 
-const flattenForCompare = text => String(text || '').toLowerCase()
-  .replace(/[\s　,.，。!！?？、\-—_~～/()（）\[\]【】《》'":：]/g, '');
-
-// QQ 音乐的歌词开头经常带一行「歌名」或「歌名 - 歌手」，面板顶部已经有标题了，
-// 再显示一遍就是重复。只在开头那段"头部区"（meta 行或 3 秒内）里摘掉它，
-// 碰到第一句正常歌词就停手——否则副歌里恰好等于歌名的整句唱词会被误删。
-export function stripTitleEcho(rows, title, artist) {
-  if (!Array.isArray(rows) || !rows.length) return rows;
-  const titleKey = flattenForCompare(title);
-  if (!titleKey) return rows;
-  const artistKey = flattenForCompare(artist);
-  const out = rows.slice();
-  let index = 0;
-  while (index < out.length) {
-    const row = out[index];
-    if (!row.meta && row.time > 3) break;
-    const key = flattenForCompare(row.text);
-    if (key === titleKey
-      || (artistKey && (key === titleKey + artistKey || key === artistKey + titleKey))) {
-      out.splice(index, 1);
-      continue;
-    }
-    index += 1;
+const xmlText = value => value.replace(/&(#x[\da-f]+|#\d+|quot|apos|lt|gt|amp);/gi, (entity, code) => {
+  if (code[0] === '#') {
+    const number = code[1].toLowerCase() === 'x' ? parseInt(code.slice(2), 16) : Number(code.slice(1));
+    return number >= 0 && number <= 0x10ffff ? String.fromCodePoint(number) : entity;
   }
-  return out;
+  return ({ quot: '"', apos: "'", lt: '<', gt: '>', amp: '&' })[code.toLowerCase()];
+});
+
+export function parseNativeLyrics(source, format) {
+  if (typeof source !== 'string' || !['qrc', 'yrc'].includes(format)) return { rows: [], meta: {} };
+  const body = source.includes('LyricContent')
+    ? xmlText(source.match(/LyricContent\s*=\s*(["'])([\s\S]*?)\1/i)?.[2] || '') : source;
+  const meta = parseLrc(body).meta;
+  const offset = /^[+-]?\d+$/.test(meta.offset || '') ? Number(meta.offset) / 1000 : 0;
+  const grouped = new Map();
+  body.split(/\r\n|\n|\r/).forEach(line => {
+    const head = line.match(/^\s*\[(\d+),(\d+)\]/);
+    if (!head) return;
+    const start = Number(head[1]) / 1000 - offset;
+    const content = line.slice(head[0].length);
+    const pattern = format === 'qrc' ? /\((\d+),(\d+)\)/g : /\((\d+),(\d+),\d+\)/g;
+    const tags = [...content.matchAll(pattern)];
+    const words = [];
+    if (format === 'yrc' && tags[0]?.index > 0) {
+      words.push({ text: content.slice(0, tags[0].index), start: null, end: null });
+    }
+    tags.forEach((tag, index) => {
+      const text = format === 'qrc'
+        ? content.slice(index ? tags[index - 1].index + tags[index - 1][0].length : 0, tag.index)
+        : content.slice(tag.index + tag[0].length, tags[index + 1]?.index ?? content.length);
+      if (!text) return;
+      const time = Number(tag[1]) / 1000 - offset;
+      words.push({ text, start: time, end: time + Number(tag[2]) / 1000 });
+    });
+    if (format === 'qrc' && tags.length) {
+      const last = tags[tags.length - 1];
+      const suffix = content.slice(last.index + last[0].length);
+      if (suffix) words.push({ text: suffix, start: null, end: null });
+    }
+    const text = content.replace(pattern, '');
+    const timed = words.filter(word => word.start !== null);
+    const valid = timed.length > 0 && timed.every((word, index) => Number.isFinite(word.end)
+      && word.start >= start && (!index || word.start >= timed[index - 1].start));
+    if (!grouped.has(start)) grouped.set(start, []);
+    const lines = grouped.get(start);
+    if (text && !lines.some(item => item.text === text)) lines.push({ text, words: valid ? words : null });
+  });
+  const rows = [...grouped].sort(([a], [b]) => a - b).map(([time, lines]) => ({
+    time, text: lines[0]?.text || '', lines: lines.map(line => line.text),
+    wordLines: lines.map(line => line.words), translations: [],
+    meta: lines.length > 0 && lines.every(line => META_HEAD.test(line.text)),
+  }));
+  return { rows, meta, format };
+}
+
+export function parseLyricsPayload(payload) {
+  if (typeof payload === 'string') return parseLrc(payload);
+  const plain = parseLrc(payload?.lyric);
+  const native = payload?.provider === 'qq' ? parseNativeLyrics(payload.qrc, 'qrc')
+    : payload?.provider === 'netease' ? parseNativeLyrics(payload.yrc, 'yrc') : null;
+  const hasNativeWords = native?.rows.some(row => row.wordLines.some(Boolean));
+  const original = hasNativeWords ? native : plain;
+  const translation = parseLrc(hasNativeWords && payload?.provider === 'netease'
+    ? payload.ytlyric : payload?.tlyric);
+  const translatedAt = new Map(translation.rows.map(row => [Math.round(row.time * 1000), row.lines]));
+  // Match exact LRC times; never guess by array position or nearby sentences.
+  original.rows.forEach(row => {
+    if (!row.lines.length) return;
+    row.translations = (translatedAt.get(Math.round(row.time * 1000)) || [])
+      .filter(text => !row.lines.includes(text));
+  });
+  return original;
+}
+
+export function findLrcIndex(rows, time) {
+  let low = 0;
+  let high = rows.length - 1;
+  let result = -1;
+  while (low <= high) {
+    const middle = (low + high) >>> 1;
+    if (rows[middle].time <= time) {
+      result = middle;
+      low = middle + 1;
+    } else high = middle - 1;
+  }
+  return result;
 }
 
 const cache = new Map();
-
+export function invalidateLrc(url) {
+  cache.delete(url);
+}
 export function ensureLrc(url) {
-  if (!url) return Promise.resolve(null);
+  if (!url) return Promise.resolve({ rows: [], meta: {} });
   const existing = cache.get(url);
   if (existing) return existing;
-
   const request = fetch(url, { cache: 'no-store' })
     .then(async response => {
-      if (!response.ok) throw new Error(`Local lyrics ${response.status}`);
+      if (!response.ok) throw new Error(`Lyrics ${response.status}`);
       const contentType = response.headers.get('content-type') || '';
-      if (contentType.includes('application/json')) {
-        const payload = await response.json();
-        return payload.lyric || payload.tlyric || '';
-      }
-      return response.text();
+      return contentType.includes('application/json') ? response.json() : response.text();
     })
-    .then(text => {
-      const parsed = parseLrc(text);
-      parsed.url = url;
-      return parsed;
-    })
+    .then(payload => ({ ...parseLyricsPayload(payload), url }))
     .catch(error => {
-      // 网络失败不留在缓存里，下次点播放可以重试
-      cache.delete(url);
+      if (cache.get(url) === request) cache.delete(url);
       throw error;
     });
-
   cache.set(url, request);
   return request;
 }
 
 export function prefetchLrc(url) {
-  if (!url) return;
-  ensureLrc(url).catch(() => { /* 预取失败不影响播放 */ });
+  if (url) ensureLrc(url).catch(() => {});
 }
 
-// 最多等 timeout 毫秒，歌词再慢也不能把播放卡死
 export function waitForLrc(url, timeout = 2600) {
   if (!url) return Promise.resolve(null);
   return new Promise(resolve => {
