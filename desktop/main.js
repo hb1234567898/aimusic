@@ -354,6 +354,7 @@ async function createWindow() {
     if (hasNeteaseLogin(savedCookie)) await syncNeteaseCookieToBridge(savedCookie);
   } catch { /* 离线启动时仍然允许打开本地曲库 */ }
   mainWindow = new BrowserWindow({
+    icon: path.join(__dirname, 'icons', process.platform === 'win32' ? 'orbit.ico' : 'orbit.png'),
     width: 1480,
     height: 920,
     minWidth: 960,

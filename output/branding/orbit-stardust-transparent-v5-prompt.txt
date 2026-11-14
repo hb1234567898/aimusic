@@ -1,0 +1,5 @@
+Tool: built-in image_gen, transparent background edit.
+Input: orbit-stardust-v4.png
+Output status: preview; visible edge artifacts remain.
+
+Background removal only. Extract the exact existing lunar sound-grooves emblem from this image onto a truly transparent alpha background. Remove all near-black background both outside the emblem and in all curved internal negative-space gaps. Preserve ALL actual emblem surfaces including the dark charcoal upper-left ribbon (it is foreground, do NOT remove it), silver-white gradient ribbons, warm yellow crescent, and the fine gold dust embedded on their surfaces. Preserve precise original contours, geometry, composition, colors, gradients and fine gold particles. No redesign, no added objects, no shadows, no checkerboard painted into the image. Smooth clean antialiased edges, no dark matte fringes. Output a transparent PNG.

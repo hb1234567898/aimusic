@@ -1,7 +1,7 @@
 {
   "name": "orbit-music",
   "private": true,
-  "version": "1.0.20",
+  "version": "2.0.0",
   "description": "ORBIT liquid-glass music universe with QQ Music and Netease Cloud Music bridges",
   "author": "ORBIT Music",
   "type": "module",
@@ -52,13 +52,16 @@
       "THIRD_PARTY_NOTICES.md"
     ],
     "win": {
+      "icon": "desktop/icons/orbit.ico",
       "target": [
         "nsis",
         "portable"
       ],
-      "signAndEditExecutable": false
+      "signAndEditExecutable": true
     },
     "nsis": {
+      "installerIcon": "desktop/icons/orbit.ico",
+      "uninstallerIcon": "desktop/icons/orbit.ico",
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,

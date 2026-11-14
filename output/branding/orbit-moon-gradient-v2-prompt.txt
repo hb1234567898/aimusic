@@ -1,0 +1,5 @@
+Tool: built-in image_gen, edit mode, transparent background.
+Input: orbit-roaming-concept-v1.png
+Status: color concept; transparent edges still require cleanup before production use.
+
+Edit the supplied ORBIT logo. Preserve its minimal flat 2D open circular O orbital silhouette and the single detached round satellite in the upper right gap, same centered square composition. Change the orbital band to an elegant smooth grayscale gradient from near-black charcoal through medium silver gray to white, distributed along the arc, not 3D lighting. Change the small circular satellite to soft warm moon yellow (#F1D58A), subtle pale cream-yellow gradient allowed. It remains a simple round lunar disc, no craters or extra detailing. Critically CLEAN ALL rough edges and remove every stray fleck/speckle, distress texture, outline artifact and noise from the original. Perfect smooth vector-like contours and clean solid interior gradients. Premium minimalist 2D cosmic roaming identity, two shapes only, generous negative space. Transparent background preserved. No text, no additional stars, no extra rings, no shadows, no glow, no metallic bevel, no 3D.
